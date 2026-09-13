@@ -1,0 +1,24 @@
+name: Bug report
+description: Report a reproducible problem in Spechy.
+title: "[Bug]: "
+body:
+  - type: input
+    id: version
+    attributes:
+      label: Spechy and Windows versions
+      placeholder: Spechy 0.1.1, Windows 11 x64
+    validations:
+      required: true
+  - type: textarea
+    id: reproduce
+    attributes:
+      label: Steps to reproduce
+      description: Include the target app, shortcut and provider/model if relevant. Do not include keys or private dictation text.
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected and actual behavior
+    validations:
+      required: true
