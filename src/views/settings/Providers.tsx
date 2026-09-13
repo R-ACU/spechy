@@ -1,11 +1,13 @@
 // Provider settings: pick where transcription and cleanup run, including your own
 // or a local OpenAI-compatible server. Everything saves the moment it changes.
-import { useState } from "react";
-import { ExternalLink } from "lucide-react";
-import { api, type ModelSource, type PolishProvider, type Providers as ProvidersModel, type SttProvider } from "../../lib/ipc";
+import { useEffect, useState } from "react";
+import { ExternalLink, Library } from "lucide-react";
+import { api, type LocalModelFit, type ModelSource, type PolishProvider, type Providers as ProvidersModel, type SttProvider } from "../../lib/ipc";
+import { safeCall } from "../../lib/mock";
 import { useStore } from "../../lib/store";
 import { Button, Toggle } from "../../components/ui";
 import { ModelPicker, type Recommendation } from "../../components/ModelPicker";
+import { ModelLibrary } from "../../components/ModelLibrary";
 import { Choice, Group, Row, SecretInput, type ChoiceOption } from "./parts";
 
 const STT_CHOICES: ChoiceOption<SttProvider>[] = [
@@ -46,8 +48,27 @@ export default function Providers() {
   const p = settings.providers;
   const [testing, setTesting] = useState<ModelSource | null>(null);
   const [status, setStatus] = useState<Partial<Record<ModelSource, { ok: boolean; message: string }>>>({});
+  const [library, setLibrary] = useState(false);
+  const [localPick, setLocalPick] = useState<LocalModelFit | null>(null);
 
   const patch = (next: Partial<ProvidersModel>) => void update({ providers: { ...p, ...next } });
+
+  // Best local model for this PC, shown next to the library button.
+  useEffect(() => {
+    void safeCall(() => api.listLocalModels(), "localModels", [] as LocalModelFit[])
+      .then((list) => setLocalPick(list.find((entry) => entry.recommended) ?? null));
+  }, []);
+
+  /** Apply a library pick: local transcription through the selected model. */
+  const useLocal = (fit: LocalModelFit) => {
+    patch({
+      sttProvider: "custom",
+      customSttModel: fit.model.id,
+      customSttBaseUrl: p.customSttBaseUrl.trim() ? p.customSttBaseUrl : "http://127.0.0.1:8080/v1",
+    });
+    setLibrary(false);
+    toast({ kind: "success", message: `${fit.model.name} selected. Start your local server, then press Test.` });
+  };
 
   const test = async (provider: ModelSource, key: string) => {
     setTesting(provider);
@@ -90,6 +111,15 @@ export default function Providers() {
           <Choice value={p.sttProvider} options={STT_CHOICES} onChange={(v) => patch({ sttProvider: v })} />
         </div>
 
+        {p.sttProvider !== "custom" && (
+          <div className="pv-hint">
+            <span>Prefer to keep audio on this PC? The local model library recommends whisper.cpp models for your hardware.</span>
+            <Button variant="secondary" size="sm" onClick={() => setLibrary(true)}>
+              <Library size={14} /> Browse local models
+            </Button>
+          </div>
+        )}
+
         {(p.sttProvider === "auto" || p.sttProvider === "groq") && (
           <>
             <Row label="Groq API key" sub="Stored locally, never sent anywhere else." extra={linkRow("Get a key", "https://console.groq.com/keys")}>
@@ -126,6 +156,18 @@ export default function Providers() {
 
         {p.sttProvider === "custom" && (
           <>
+            <div className="pv-block pv-local">
+              <div className="pv-local-text">
+                <div className="pv-local-title">Local model library</div>
+                <div className="pv-local-sub muted">
+                  Curated Whisper models scored against this PC, German quality included.
+                  {localPick ? ` Best match: ${localPick.model.name}.` : ""}
+                </div>
+              </div>
+              <Button variant="secondary" size="sm" onClick={() => setLibrary(true)}>
+                <Library size={14} /> Open library
+              </Button>
+            </div>
             <Row label="Server address" sub={LOCAL_HELP}>
               <input
                 className="input set-input"
@@ -229,6 +271,8 @@ export default function Providers() {
           Open
         </Button>
       </div>
+
+      {library && <ModelLibrary onClose={() => setLibrary(false)} onUse={useLocal} />}
     </>
   );
 }

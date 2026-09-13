@@ -630,3 +630,78 @@ textarea.input { height: auto; padding: 10px 12px; resize: vertical; line-height
 @keyframes notification-ring { 0%, 100% { transform: rotate(0); } 25% { transform: rotate(16deg); } 55% { transform: rotate(-12deg); } 80% { transform: rotate(6deg); } }
 @keyframes notification-enter { from { opacity: 0; transform: translateY(-4px); } to { opacity: 1; transform: translateY(0); } }
 @media (prefers-reduced-motion: reduce) { .notification-ring, .notification-panel { animation: none; } }
+
+/* ============================================================ Local model library */
+.pv-local { display: flex; align-items: center; justify-content: space-between; gap: 16px; }
+.pv-local-text { min-width: 0; }
+.pv-local-title { font-size: 14px; font-weight: 600; }
+.pv-local-sub { font-size: 12.5px; line-height: 1.45; }
+.pv-hint { display: flex; align-items: center; justify-content: space-between; gap: 14px; padding: 12px 14px; margin: 14px 0 0; border-radius: var(--radius); background: var(--surface-2); font-size: 12.5px; color: var(--text-2); }
+
+/* The library opens on top of the settings panel, so it needs a higher layer. */
+.mlib-backdrop { z-index: 140; }
+.mlib-backdrop .dialog { width: 780px; max-height: calc(100vh - 64px); display: flex; flex-direction: column; }
+.mlib { flex: 1; min-height: 0; overflow-y: auto; display: flex; flex-direction: column; gap: 14px; margin: 0 -4px; padding: 0 4px; }
+
+.mlib-hw { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; }
+.mlib-hw-item { display: flex; align-items: flex-start; gap: 10px; padding: 12px 14px; border-radius: var(--radius); background: var(--surface-2); }
+.mlib-hw-icon { display: flex; align-items: center; justify-content: center; width: 28px; height: 28px; border-radius: 8px; background: var(--surface-3); color: var(--text-2); flex: none; }
+.mlib-hw-text { min-width: 0; display: block; }
+.mlib-hw-label { display: block; font-size: 11px; font-weight: 600; letter-spacing: 0.08em; text-transform: uppercase; color: var(--text-3); }
+.mlib-hw-value { display: block; font-size: 13.5px; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.mlib-hw-hint { display: block; font-size: 11.5px; color: var(--text-3); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+.mlib-toolbar { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.mlib-toolbar .input { height: 34px; font-size: 13px; flex: 1; min-width: 170px; }
+.mlib-check { display: inline-flex; align-items: center; gap: 6px; font-size: 12.5px; color: var(--text-2); white-space: nowrap; }
+.mlib-check input { accent-color: var(--ink); }
+.mlib-sort { min-width: 158px; }
+.mlib-sort .listbox-btn { height: 34px; font-size: 13px; min-width: 158px; }
+
+.mlib-rec { display: flex; align-items: center; gap: 12px; padding: 14px 16px; border-radius: var(--radius); background: var(--teal-100); color: var(--teal-900); }
+.mlib-rec-icon { display: flex; align-items: center; justify-content: center; width: 30px; height: 30px; border-radius: 9px; background: var(--teal-200); flex: none; }
+.mlib-rec-text { flex: 1; min-width: 0; display: block; }
+.mlib-rec-title { display: block; font-weight: 600; font-size: 14px; }
+.mlib-rec-sub { display: block; font-size: 12.5px; }
+
+.mlib-folder { display: flex; align-items: center; gap: 10px; font-size: 12.5px; }
+.mlib-folder .set-path { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+.mlib-card { display: flex; flex-direction: column; gap: 10px; padding: 14px 16px; border: 1px solid var(--border); border-radius: var(--radius); background: var(--field-bg); }
+.mlib-card.rec { border-color: var(--teal-400); box-shadow: 0 0 0 3px var(--teal-100); }
+.mlib-card.dim { opacity: 0.72; }
+.mlib-card-top { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; }
+.mlib-card-title { min-width: 0; }
+.mlib-name { display: block; font-size: 15px; font-weight: 600; }
+.mlib-id { display: block; font-size: 11.5px; color: var(--text-3); }
+.mlib-badges { display: flex; flex-wrap: wrap; gap: 4px; justify-content: flex-end; }
+.mlib-badge { font-size: 10.5px; font-weight: 600; letter-spacing: 0.04em; text-transform: uppercase; padding: 3px 8px; border-radius: 999px; background: var(--surface-3); color: var(--text-2); white-space: nowrap; }
+.mlib-badge.rec { background: var(--teal-900); color: var(--on-teal); }
+.mlib-badge.ok { background: var(--accent-soft); color: var(--accent); }
+.mlib-badge.fit-great { background: var(--teal-100); color: var(--teal-900); }
+.mlib-badge.fit-good { background: var(--surface-3); color: var(--text); }
+.mlib-badge.fit-tight { background: var(--accent-soft); color: var(--accent); }
+.mlib-badge.fit-too_big { background: var(--surface-3); color: var(--danger); }
+
+.mlib-note { margin: 0; font-size: 13px; color: var(--text-2); }
+.mlib-specs { display: flex; flex-wrap: wrap; gap: 6px 14px; font-size: 12px; color: var(--text-2); }
+.mlib-specs span { display: inline-flex; align-items: center; gap: 5px; }
+.mlib-specs svg { color: var(--text-3); }
+
+.mlib-meters { display: flex; flex-wrap: wrap; gap: 8px 22px; }
+.mlib-meter { display: flex; align-items: center; gap: 8px; }
+.mlib-meter-label { font-size: 11.5px; color: var(--text-3); min-width: 56px; }
+.mlib-meter-bars { display: inline-flex; gap: 3px; }
+.mlib-meter-bars i { width: 16px; height: 6px; border-radius: 999px; background: var(--surface-3); }
+.mlib-meter-bars i.on { background: var(--text-3); }
+.mlib-meter.hl .mlib-meter-label { color: var(--teal-900); font-weight: 600; }
+.mlib-meter.hl .mlib-meter-bars i.on { background: var(--teal-700); }
+
+.mlib-card-foot { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
+.mlib-reason { flex: 1; min-width: 170px; font-size: 12px; }
+.mlib-actions { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+.mlib-progress { display: flex; align-items: center; gap: 10px; font-size: 12px; }
+.mlib-progress .progress { flex: 1; }
+.mlib-msg { padding: 22px 4px; font-size: 13px; }
+.mlib-foot { display: flex; align-items: center; justify-content: space-between; gap: 8px; flex-wrap: wrap; font-size: 12.5px; }
+.mlib-foot span { flex: 1; min-width: 240px; }

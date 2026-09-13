@@ -4,7 +4,9 @@ pub mod audio;
 pub mod autostart;
 pub mod commands;
 pub mod db;
+pub mod hardware;
 pub mod hotkey;
+pub mod local_models;
 pub mod model;
 pub mod paste;
 pub mod pill;
@@ -42,6 +44,11 @@ pub fn run() {
             commands::list_microphones,
             commands::test_provider,
             commands::list_models,
+            commands::local_hardware,
+            commands::list_local_models,
+            commands::download_local_model,
+            commands::remove_local_model,
+            commands::open_models_dir,
             commands::get_app_version,
             commands::check_for_updates,
             commands::download_update,

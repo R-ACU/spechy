@@ -168,6 +168,107 @@ pub struct ModelInfo {
     pub free: bool,
 }
 
+// ---------- Local model library ----------
+
+/// A graphics adapter as reported by the Windows display class registry keys.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct GpuInfo {
+    pub name: String,
+    /// Dedicated video memory in MB; 0 when Windows reports none.
+    pub vram_mb: u64,
+    /// "nvidia" | "amd" | "intel" | "other"
+    pub vendor: String,
+}
+
+/// What this PC can comfortably run. Every field is best effort: a missing value
+/// is 0 or an empty string and must never be read as "no hardware at all".
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct HardwareProfile {
+    pub total_ram_mb: u64,
+    pub available_ram_mb: u64,
+    pub cpu_cores: u32,
+    pub cpu_name: String,
+    /// Strongest adapter, empty when only placeholder drivers were found.
+    pub gpu_name: String,
+    /// Dedicated memory usable for inference; 0 for integrated graphics or unknown.
+    pub vram_mb: u64,
+    /// "nvidia" | "amd" | "intel" | "none"
+    pub gpu_vendor: String,
+    pub gpus: Vec<GpuInfo>,
+    /// Where downloaded models live, for example `%APPDATA%\com.remo.spechy\models`.
+    pub models_dir: String,
+}
+
+/// One curated local speech model: everything the library needs to score it,
+/// describe it and (when it is a single file) download it.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct LocalModel {
+    pub id: String,
+    pub name: String,
+    /// Runtime that serves this file: currently always "whisper_cpp".
+    pub backend: String,
+    /// Model generation as shown to people, for example "Whisper Large v3".
+    pub family: String,
+    /// Parameter count, for example "809M".
+    pub params: String,
+    /// Exact download size in bytes; used to verify the transfer.
+    pub size_bytes: u64,
+    /// SHA-256 of the published file, checked after the download.
+    pub sha256: String,
+    /// RAM the runtime needs with this model loaded for CPU inference.
+    pub ram_mb: u64,
+    /// Dedicated VRAM that makes this model comfortable on a GPU.
+    pub vram_mb: u64,
+    /// 1 (rough) .. 5 (excellent), language independent.
+    pub quality: u8,
+    /// 1 (slow) .. 5 (fast), relative to CPU inference.
+    pub speed: u8,
+    /// 1 .. 5 German transcription quality.
+    pub german: u8,
+    pub languages: String,
+    pub english_only: bool,
+    pub license: String,
+    /// One sentence for the library card.
+    pub note: String,
+    /// File name inside the models folder.
+    pub file: String,
+    /// Direct download; empty when the model has to be installed by hand.
+    pub url: String,
+}
+
+/// How well a model fits the machine it was scored on.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum Fit {
+    /// Runs on the GPU with room to spare.
+    Great,
+    /// Fits in RAM for CPU inference.
+    Good,
+    /// Fits, but leaves little room for other apps.
+    Tight,
+    /// Needs more memory than this PC has.
+    TooBig,
+}
+
+/// A catalogue entry scored against the current machine, ready for the UI.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct LocalModelFit {
+    pub model: LocalModel,
+    pub fit: Fit,
+    pub score: i64,
+    /// Best pick for this PC and the configured dictation languages.
+    pub recommended: bool,
+    pub installed: bool,
+    /// Full path of the installed file, when it is present.
+    pub installed_path: Option<String>,
+    /// One line explaining the fit, for example "Runs on your RTX 4070".
+    pub reason: String,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase", default)]
 pub struct AppStyleRule {
