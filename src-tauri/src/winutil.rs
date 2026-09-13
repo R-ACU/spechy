@@ -119,7 +119,19 @@ pub fn app_category(process_name: &str, title: &str) -> &'static str {
 
     // AI chat clients. Goetia and Cursor are AI-driven but used for coding, so
     // they live in the coding list below.
-    let ai = ["claude.exe", "chatgpt.exe", "perplexity.exe", "copilot.exe"];
+    let ai = [
+        "claude.exe",
+        "chatgpt.exe",
+        "perplexity.exe",
+        "copilot.exe",
+        "gemini.exe",
+        "grok.exe",
+        "msty.exe",
+        "lmstudio.exe",
+        "ollama.exe",
+        "jan.exe",
+        "chatbox.exe",
+    ];
     if ai.contains(&process.as_str()) {
         return "ai";
     }
@@ -149,6 +161,39 @@ pub fn app_category(process_name: &str, title: &str) -> &'static str {
         "alacritty.exe",
         "studio64.exe",
         "robloxstudiobeta.exe",
+        "phpstorm64.exe",
+        "goland64.exe",
+        "datagrip64.exe",
+        "rustrover64.exe",
+        "fleet.exe",
+        "windsurf.exe",
+        "trae.exe",
+        "kiro.exe",
+        "zed editor.exe",
+        "wezterm-gui.exe",
+        "kitty.exe",
+        "tabby.exe",
+        "hyper.exe",
+        "mintty.exe",
+        "git-bash.exe",
+        "bash.exe",
+        "ubuntu.exe",
+        "wsl.exe",
+        "putty.exe",
+        "mobaxterm.exe",
+        "postman.exe",
+        "insomnia.exe",
+        "dbeaver.exe",
+        "ssms.exe",
+        "unity.exe",
+        "unrealeditor.exe",
+        "godot.exe",
+        "sourcetree.exe",
+        "github desktop.exe",
+        "githubdesktop.exe",
+        "gitkraken.exe",
+        "filezilla.exe",
+        "winscp.exe",
     ];
     if coding.contains(&process.as_str()) {
         return "coding";
@@ -163,6 +208,17 @@ pub fn app_category(process_name: &str, title: &str) -> &'static str {
         "telegram.exe",
         "signal.exe",
         "element.exe",
+        "messenger.exe",
+        "instagram.exe",
+        "skype.exe",
+        "zoom.exe",
+        "threema.exe",
+        "viber.exe",
+        "wechat.exe",
+        "line.exe",
+        "revolt.exe",
+        "beeper.exe",
+        "ferdium.exe",
     ];
     if messages.contains(&process.as_str()) {
         return "messages";
@@ -179,12 +235,50 @@ pub fn app_category(process_name: &str, title: &str) -> &'static str {
         "excel.exe",
         "wordpad.exe",
         "acrobat.exe",
+        "acrord32.exe",
+        "acrobat reader.exe",
+        "folio.exe",
+        "sumatrapdf.exe",
+        "foxitpdfreader.exe",
+        "libreoffice.exe",
+        "soffice.exe",
+        "swriter.exe",
+        "scalc.exe",
+        "simpress.exe",
+        "wps.exe",
+        "et.exe",
+        "wpp.exe",
+        "logseq.exe",
+        "anytype.exe",
+        "joplin.exe",
+        "typora.exe",
+        "marktext.exe",
+        "zotero.exe",
+        "scrivener.exe",
+        "evernote.exe",
+        "onenoteim.exe",
+        "publisher.exe",
+        "visio.exe",
     ];
     if documents.contains(&process.as_str()) {
         return "documents";
     }
 
-    let email = ["outlook.exe", "thunderbird.exe", "mailspring.exe", "hey.exe"];
+    let email = [
+        "outlook.exe",
+        "olk.exe",
+        "hxoutlook.exe",
+        "hxmail.exe",
+        "thunderbird.exe",
+        "mailspring.exe",
+        "hey.exe",
+        "em client.exe",
+        "mailbird.exe",
+        "bluemail.exe",
+        "spark.exe",
+        "postbox.exe",
+        "emclient.exe",
+    ];
     if email.contains(&process.as_str()) {
         return "email";
     }
@@ -198,33 +292,51 @@ pub fn app_category(process_name: &str, title: &str) -> &'static str {
         "opera.exe",
         "vivaldi.exe",
         "arc.exe",
+        "zen.exe",
+        "librewolf.exe",
+        "waterfox.exe",
+        "chromium.exe",
+        "floorp.exe",
+        "thorium.exe",
+        "iexplore.exe",
     ];
     if browsers.contains(&process.as_str()) {
-        if title_lower.contains("gmail")
-            || title_lower.contains("outlook")
-            || title_lower.contains("posteingang")
-            || title_lower.contains("inbox")
+        // Window titles of browsers end in the site name, so a keyword list is
+        // enough here and costs nothing at dictation time.
+        let hit = |needles: &[&str]| needles.iter().any(|needle| title_lower.contains(needle));
+
+        if hit(&["gmail", "outlook", "posteingang", "inbox", "mail.google", "web.de", "gmx",
+                 "proton mail", "protonmail", "roundcube", "zoho mail", "icloud mail", "yahoo mail",
+                 "mailbox.org", "fastmail", "e-mail", "webmail"])
         {
             return "email";
         }
-        if title_lower.contains("chatgpt")
-            || title_lower.contains("claude")
-            || title_lower.contains("gemini")
-            || title_lower.contains("perplexity")
+        if hit(&["chatgpt", "claude", "gemini", "perplexity", "copilot", "grok", "deepseek",
+                 "mistral", "le chat", "poe.com", "openrouter", "huggingface", "hugging face",
+                 "midjourney", "notebooklm", "qwen", "kimi", "t3.chat", "openai"])
         {
             return "ai";
         }
-        if title_lower.contains("github")
-            || title_lower.contains("gitlab")
-            || title_lower.contains("stack overflow")
+        if hit(&["github", "gitlab", "bitbucket", "stack overflow", "stackoverflow", "localhost",
+                 "127.0.0.1", "vercel", "netlify", "cloudflare", "supabase", "railway", "render.com",
+                 "codepen", "codesandbox", "stackblitz", "replit", "jira", "linear.app", "sentry",
+                 "npm", "crates.io", "docs.rs", "mdn", "developer.mozilla", "jenkins", "grafana",
+                 "aws console", "console.cloud.google", "azure portal", "digitalocean", "hostinger"])
         {
             return "coding";
         }
-        if title_lower.contains("whatsapp")
-            || title_lower.contains("discord")
-            || title_lower.contains("slack")
+        if hit(&["whatsapp", "discord", "slack", "messenger", "instagram", "telegram", "teams",
+                 "signal", "reddit", "twitter", " / x", "bluesky", "mastodon", "tiktok",
+                 "facebook", "snapchat"])
         {
             return "messages";
+        }
+        if hit(&["google docs", "google drive", "google sheets", "google slides", "docs.google",
+                 "notion", "obsidian", "confluence", "coda.io", "overleaf", "word", "excel",
+                 "powerpoint", "onedrive", "dropbox", "sharepoint", "pdf", "wikipedia",
+                 "moodle", "ilias", "studip", "stud.ip", "hisinone", "canvas"])
+        {
+            return "documents";
         }
         return "other";
     }
@@ -234,4 +346,36 @@ pub fn app_category(process_name: &str, title: &str) -> &'static str {
         return "email";
     }
     "other"
+}
+
+#[cfg(test)]
+mod tests {
+    use super::app_category;
+
+    #[test]
+    fn known_apps_and_browser_tabs_land_in_the_right_bucket() {
+        assert_eq!(app_category("claude.exe", ""), "ai");
+        assert_eq!(app_category("Goetia.exe", "spechy"), "coding");
+        assert_eq!(app_category("wezterm-gui.exe", ""), "coding");
+        assert_eq!(app_category("olk.exe", "Posteingang"), "email");
+        assert_eq!(app_category("folio.exe", "invoice.pdf"), "documents");
+        assert_eq!(app_category("instagram.exe", ""), "messages");
+    }
+
+    #[test]
+    fn browser_windows_are_read_from_their_title() {
+        assert_eq!(app_category("chrome.exe", "ChatGPT - Google Chrome"), "ai");
+        assert_eq!(app_category("firefox.exe", "remo/spechy: dictation - GitHub"), "coding");
+        assert_eq!(app_category("chrome.exe", "localhost:1433/"), "coding");
+        assert_eq!(app_category("msedge.exe", "Posteingang - Gmail"), "email");
+        assert_eq!(app_category("chrome.exe", "Seminar notes - Google Docs"), "documents");
+        assert_eq!(app_category("chrome.exe", "WhatsApp Web"), "messages");
+        assert_eq!(app_category("chrome.exe", "Wetter in Hannover"), "other");
+    }
+
+    #[test]
+    fn unknown_apps_stay_other_unless_the_title_says_mail() {
+        assert_eq!(app_category("something.exe", "Untitled"), "other");
+        assert_eq!(app_category("something.exe", "Mail - Remo"), "email");
+    }
 }

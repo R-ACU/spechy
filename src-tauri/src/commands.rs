@@ -112,6 +112,20 @@ pub fn open_models_dir() -> Result<(), String> {
     Ok(())
 }
 
+// ---------- Microphone preview ----------
+
+/// Start the level meter for `device` ("" = system default). Nothing is recorded,
+/// transcribed or pasted: the preview only emits `spechy://mic-level`.
+#[tauri::command]
+pub fn start_mic_test(device: String) -> Result<(), String> {
+    crate::mictest::start(&device)
+}
+
+#[tauri::command]
+pub fn stop_mic_test() {
+    crate::mictest::stop();
+}
+
 // ---------- Managed whisper.cpp server ----------
 
 /// Whether the local server is unpacked and running, plus its log tail.

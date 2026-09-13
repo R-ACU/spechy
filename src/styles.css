@@ -220,8 +220,8 @@ textarea.input { height: auto; padding: 10px 12px; resize: vertical; line-height
 
 .ins-gauge { display: block; width: 100%; max-width: 200px; margin: 10px auto 0; }
 .ins-gauge-arc { transition: stroke-dasharray 600ms var(--ease); }
-.ins-gauge-cap { fill: var(--text-2); font-size: 15px; font-family: var(--font); }
-.ins-gauge-val { fill: var(--text); font-size: 22px; font-weight: 600; font-family: var(--font); }
+.ins-gauge-cap { fill: var(--text-2); font-size: 13px; font-family: var(--font); }
+.ins-gauge-scale { fill: var(--text-3); font-size: 11px; font-family: var(--font); }
 
 .ins-pill { display: inline-flex; align-items: center; gap: 5px; padding: 5px 11px; border-radius: 999px; background: var(--teal-100); color: var(--teal-900); font-size: 12px; font-weight: 600; white-space: nowrap; }
 .ins-books { margin: 0 0 12px; font-size: 15px; }
@@ -469,7 +469,11 @@ textarea.input { height: auto; padding: 10px 12px; resize: vertical; line-height
 .search-field.inline .search-input { width: 220px; height: 34px; }
 
 /* Home */
-.home-grid { display: grid; grid-template-columns: minmax(0, 1fr) 230px; gap: 28px; align-items: start; }
+.home-grid { display: grid; grid-template-columns: minmax(0, 1fr); align-items: start; }
+/* The totals sit right under the greeting: a sidebar for three numbers wasted the
+   whole right half of the window. */
+.home-stats { display: flex; flex-wrap: wrap; gap: 10px 32px; padding: 0 2px 22px; }
+.home-stat { display: flex; align-items: baseline; gap: 8px; }
 .home-main { min-width: 0; }
 .day-group { margin-bottom: 28px; }
 .day-label { display: block; margin: 0 0 12px 2px; }

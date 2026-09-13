@@ -10,6 +10,7 @@ pub const EV_HISTORY_ADDED: &str = "spechy://history-added"; // payload: History
 pub const EV_SETTINGS_CHANGED: &str = "spechy://settings-changed"; // payload: Settings
 pub const EV_TOAST: &str = "spechy://toast"; // payload: Toast
 pub const EV_NAVIGATE: &str = "spechy://navigate"; // payload: String (view id, e.g. "settings")
+pub const EV_MIC_LEVEL: &str = "spechy://mic-level"; // payload: f32 (0.0..1.0, microphone preview only)
 pub const EV_SCRATCHPAD: &str = "spechy://scratchpad"; // payload: String (full scratchpad text after a dictation landed there)
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]

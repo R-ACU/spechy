@@ -69,6 +69,7 @@ export default function Onboarding() {
   const [mics, setMics] = useState<MicDevice[]>([]);
   const [level, setLevel] = useState(0);
   const [heard, setHeard] = useState(false);
+  const [micError, setMicError] = useState("");
 
   // step 4: hotkeys
   const [recording, setRecording] = useState<null | keyof typeof settings.hotkeys>(null);
@@ -118,6 +119,28 @@ export default function Onboarding() {
     if (step !== "microphone") return;
     void safe(() => api.listMicrophones(), MOCK ? mockMicrophones : []).then(setMics);
   }, [step]);
+
+  // The meter runs on its own while this step is open: no dictation, no
+  // transcription, nothing pasted. Changing the device reopens it.
+  useEffect(() => {
+    if (step !== "microphone") return;
+    let dead = false;
+    let un: (() => void) | undefined;
+    setMicError("");
+    setLevel(0);
+    events
+      .onMicLevel((value) => { if (!dead) { setLevel(value); if (value > 0.04) setHeard(true); } })
+      .then((f) => { if (dead) f(); else un = f; })
+      .catch(() => {});
+    api.startMicTest(settings.microphone)
+      .catch((error) => { if (!dead) setMicError(String(error)); });
+    return () => {
+      dead = true;
+      un?.();
+      setLevel(0);
+      api.stopMicTest().catch(() => {});
+    };
+  }, [step, settings.microphone]);
 
   useEffect(() => {
     if (step === "practice") practiceRef.current?.focus();
@@ -240,7 +263,7 @@ export default function Onboarding() {
             <StepHead
               icon={<Mic size={22} strokeWidth={1.8} />}
               title="Pick your microphone"
-              body="Choose the input Spechy should listen to, then hold your dictation hotkey once so you can see the level move."
+              body="Choose the input Spechy should listen to and say something. The bar moves as soon as Spechy hears you."
             />
             <div className="onb-fields">
               <div className="onb-field">
@@ -262,8 +285,11 @@ export default function Onboarding() {
                   <div className="onb-meter-fill" style={{ width: `${Math.min(100, Math.round(level * 130))}%` }} />
                 </div>
                 <p className="onb-field-sub">
-                  Hold <Chord chord={settings.hotkeys.pushToTalk} /> and say a few words.
-                  {heard ? <span className="onb-ok-line"><Check size={14} />Spechy can hear you.</span> : " The bar fills while you speak."}
+                  {micError
+                    ? micError
+                    : heard
+                      ? <span className="onb-ok-line"><Check size={14} />Spechy can hear you.</span>
+                      : "Say a few words. Nothing is recorded or sent while you test."}
                 </p>
               </div>
             </div>

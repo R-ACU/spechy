@@ -8,6 +8,7 @@ pub mod hardware;
 pub mod hotkey;
 pub mod local_models;
 pub mod local_server;
+pub mod mictest;
 pub mod model;
 pub mod paste;
 pub mod pill;
@@ -50,6 +51,8 @@ pub fn run() {
             commands::download_local_model,
             commands::remove_local_model,
             commands::open_models_dir,
+            commands::start_mic_test,
+            commands::stop_mic_test,
             commands::local_server_status,
             commands::install_local_server,
             commands::start_local_server,

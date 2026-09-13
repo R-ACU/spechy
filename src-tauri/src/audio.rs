@@ -98,6 +98,15 @@ impl Recorder {
         (encode_wav(&samples), duration_ms)
     }
 
+    /// Throw away everything recorded so far. The microphone preview keeps no
+    /// audio at all, so its buffer must not grow while the meter is open.
+    pub fn discard(&self) {
+        match self.buffer.lock() {
+            Ok(mut guard) => guard.clear(),
+            Err(poisoned) => poisoned.into_inner().clear(),
+        }
+    }
+
     /// Highest RMS seen so far, for the silence check.
     pub fn peak_rms(&self) -> f32 {
         f32::from_bits(self.peak.load(Ordering::Relaxed))

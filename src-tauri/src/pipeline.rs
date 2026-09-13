@@ -64,6 +64,15 @@ fn app() -> Option<&'static AppHandle> {
     APP.get()
 }
 
+/// The app handle for modules that emit their own events (microphone preview).
+pub fn app_handle() -> Option<&'static AppHandle> {
+    APP.get()
+}
+
+pub fn is_recording() -> bool {
+    matches!(lock().public.phase, Phase::Recording)
+}
+
 fn emit_state(snapshot: &DictationState) {
     if let Some(app) = app() {
         let _ = app.emit(EV_STATE, snapshot);
@@ -176,6 +185,9 @@ pub fn start(mode: DictationMode) -> Result<(), String> {
     if matches!(lock().public.phase, Phase::Recording) {
         return Ok(());
     }
+
+    // The microphone preview must let go of the device before a dictation opens it.
+    crate::mictest::stop();
 
     let settings = crate::settings::current();
     let app_info = crate::winutil::foreground_app();

@@ -165,6 +165,9 @@ export const api = {
   getSettings: () => invoke<Settings>("get_settings"),
   setSettings: (settings: Settings) => invoke<Settings>("set_settings", { settings }),
   listMicrophones: () => invoke<MicDevice[]>("list_microphones"),
+  /** Live level meter for a microphone. Records nothing and costs nothing. */
+  startMicTest: (device: string) => invoke<void>("start_mic_test", { device }),
+  stopMicTest: () => invoke<void>("stop_mic_test"),
   testProvider: (provider: ModelSource, apiKey: string) => invoke<string>("test_provider", { provider, apiKey }),
   listModels: (provider: ModelSource, refresh = false) => invoke<ModelInfo[]>("list_models", { provider, refresh }),
   // local model library
@@ -243,6 +246,7 @@ export const api = {
 // ---------- Events ----------
 export const events = {
   onState: (cb: (s: DictationState) => void): Promise<UnlistenFn> => listen<DictationState>("spechy://state", (e) => cb(e.payload)),
+  onMicLevel: (cb: (level: number) => void): Promise<UnlistenFn> => listen<number>("spechy://mic-level", (e) => cb(e.payload)),
   onHistoryAdded: (cb: (h: HistoryEntry) => void): Promise<UnlistenFn> => listen<HistoryEntry>("spechy://history-added", (e) => cb(e.payload)),
   onSettingsChanged: (cb: (s: Settings) => void): Promise<UnlistenFn> => listen<Settings>("spechy://settings-changed", (e) => cb(e.payload)),
   onToast: (cb: (t: Toast) => void): Promise<UnlistenFn> => listen<Toast>("spechy://toast", (e) => cb(e.payload)),

@@ -13,7 +13,7 @@ export function Gauge({ wpm }: { wpm: number }) {
   const d = `M ${cx - r} ${cy} A ${r} ${r} 0 0 1 ${cx + r} ${cy}`;
   const filled = Math.max(0, Math.min(100, (wpm / 200) * 100));
   return (
-    <svg viewBox="0 0 184 98" className="ins-gauge" role="img" aria-label={`${wpm} words per minute on a 0 to 200 scale`}>
+    <svg viewBox="0 0 184 110" className="ins-gauge" role="img" aria-label={`${wpm} words per minute on a 0 to 200 scale`}>
       <path d={d} fill="none" stroke="var(--teal-200)" strokeWidth={18} strokeLinecap="round" />
       <path
         d={d}
@@ -26,8 +26,11 @@ export function Gauge({ wpm }: { wpm: number }) {
         className="ins-gauge-arc"
         visibility={wpm > 0 ? "visible" : "hidden"}
       />
-      <text x={cx} y={cy - 32} textAnchor="middle" className="ins-gauge-cap">Recent pace</text>
-      <text x={cx} y={cy - 6} textAnchor="middle" className="ins-gauge-val">{wpm} wpm</text>
+      {/* The number is already the headline of the card, so the arc only carries a
+          caption and its scale. Repeating "127 wpm" inside the arc collided with it. */}
+      <text x={cx} y={cy - 14} textAnchor="middle" className="ins-gauge-cap">Recent pace</text>
+      <text x={cx - r} y={cy + 16} textAnchor="middle" className="ins-gauge-scale">0</text>
+      <text x={cx + r} y={cy + 16} textAnchor="middle" className="ins-gauge-scale">200</text>
     </svg>
   );
 }

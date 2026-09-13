@@ -198,6 +198,12 @@ export default function Home() {
         </div>
       </div>
 
+      <div className="home-stats">
+        <div className="home-stat"><span className="stat-num">{compactNumber(stats?.totalWords ?? 0)}</span><span className="stat-label">{t("total words", lang)}</span></div>
+        <div className="home-stat"><span className="stat-num">{stats?.wpm ?? 0}</span><span className="stat-label">{t("wpm", lang)}</span></div>
+        <div className="home-stat"><span className="stat-num">{stats?.streakDays ?? 0}</span><span className="stat-label">{t("day streak", lang)}</span></div>
+      </div>
+
       <div className="home-grid">
         <div className="home-main">
           {entries.length === 0 && !loading && (
@@ -225,14 +231,6 @@ export default function Home() {
             </div>
           )}
         </div>
-
-        <aside className="home-side">
-          <div className="side-card">
-            <div className="stat-line"><span className="stat-num">{compactNumber(stats?.totalWords ?? 0)}</span><span className="stat-label">{t("total words", lang)}</span></div>
-            <div className="stat-line"><span className="stat-num">{stats?.wpm ?? 0}</span><span className="stat-label">{t("wpm", lang)}</span></div>
-            <div className="stat-line"><span className="stat-num">{stats?.streakDays ?? 0}</span><span className="stat-label">{t("day streak", lang)}</span></div>
-          </div>
-        </aside>
       </div>
     </div>
   );
