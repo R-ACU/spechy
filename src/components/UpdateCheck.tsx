@@ -73,7 +73,7 @@ export default function UpdateCheck() {
   const percent = progress?.total ? Math.min(100, Math.round(progress.downloaded / progress.total * 100)) : undefined;
   const busy = checking || downloading || installing;
 
-  return <section className="help-card">
+  return <section className="help-card" id="spechy-updates" tabIndex={-1}>
     <h2 className="help-title">Updates</h2>
     <p className="muted" role="status">{error || downloadError || (installing ? "Installing update. Spechy will restart..." : downloading ? `Downloading update${percent === undefined ? "..." : `: ${percent}%`}` : ready ? `Spechy ${ready} is ready to install.` : checking ? "Checking for updates..." : result?.available ? `Spechy ${result.version} is available.` : result ? "You are up to date." : "Check for a new version of Spechy.")}</p>
     {downloading && <progress className="update-progress" aria-label="Update download" max={100} value={percent} />}

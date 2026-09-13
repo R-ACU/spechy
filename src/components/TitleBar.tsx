@@ -1,4 +1,5 @@
-import { Bell, CircleUser, Copy, Minus, PanelLeft, Square, X } from "lucide-react";
+import { CircleUser, Copy, Minus, PanelLeft, Square, X } from "lucide-react";
+import UpdateNotifications from "./UpdateNotifications";
 import { api } from "../lib/ipc";
 import type { Phase } from "../lib/ipc";
 import { IconButton } from "./ui";
@@ -25,7 +26,7 @@ export default function TitleBar({ phase, maximized, onToggleSidebar, onAccount 
       <div className="titlebar-drag" data-tauri-drag-region />
       <div className="titlebar-right">
         {dot && <span className={`phase-dot ${dot}`} title={phase} aria-label={`Dictation ${phase}`} />}
-        <IconButton label="Notifications"><Bell size={18} /></IconButton>
+        <UpdateNotifications />
         <IconButton label="Minimize" className="win-btn" onClick={() => call(api.minimizeWindow)}><Minus size={18} /></IconButton>
         <IconButton label={maximized ? "Restore" : "Maximize"} className="win-btn" onClick={() => call(api.toggleMaximizeWindow)}>
           {maximized ? <Copy size={15} /> : <Square size={15} />}

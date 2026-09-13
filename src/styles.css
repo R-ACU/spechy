@@ -615,3 +615,18 @@ textarea.input { height: auto; padding: 10px 12px; resize: vertical; line-height
 .onb-dot.done { background: var(--text-3); }
 .onb-dot.active { width: 20px; background: var(--ink); }
 .update-progress { width: 100%; height: 6px; accent-color: var(--text); }
+.update-notifications { position: relative; }
+.notification-trigger { position: relative; }
+.notification-count { position: absolute; top: 0; right: -1px; min-width: 15px; height: 15px; padding: 0 3px; display: grid; place-items: center; border-radius: 20px; background: var(--accent); color: var(--on-solid); font-size: 10px; font-weight: 600; line-height: 1; }
+.notification-panel { position: absolute; top: calc(100% + 8px); right: 0; width: 320px; z-index: 100; padding: 12px; border: 1px solid var(--border); border-radius: 16px; background: var(--menu-bg); box-shadow: var(--shadow-3); animation: notification-enter 160ms ease-out; }
+.notification-heading { display: flex; align-items: center; justify-content: space-between; padding-left: 8px; margin-bottom: 8px; font-size: 13px; }
+.notification-update { display: flex; align-items: center; gap: 12px; width: 100%; padding: 14px 12px; border-radius: 10px; text-align: left; color: var(--text); background: var(--surface-2); }
+.notification-update:hover { background: var(--surface-3); }
+.notification-update > svg { color: var(--accent); flex-shrink: 0; }
+.notification-update strong { display: block; font-size: 13px; font-weight: 600; }
+.notification-update span span { display: block; margin-top: 4px; font-size: 12px; color: var(--text-2); }
+.notification-empty { padding: 4px 8px 8px; color: var(--text-2); font-size: 13px; }
+.notification-ring { transform-origin: 50% 15%; animation: notification-ring 280ms ease-in-out; }
+@keyframes notification-ring { 0%, 100% { transform: rotate(0); } 25% { transform: rotate(16deg); } 55% { transform: rotate(-12deg); } 80% { transform: rotate(6deg); } }
+@keyframes notification-enter { from { opacity: 0; transform: translateY(-4px); } to { opacity: 1; transform: translateY(0); } }
+@media (prefers-reduced-motion: reduce) { .notification-ring, .notification-panel { animation: none; } }
