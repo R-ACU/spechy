@@ -4,8 +4,8 @@
 use tauri::{Emitter, Manager};
 
 use crate::model::{
-    new_id, now_ms, DictationMode, DictationState, DictionaryEntry, HistoryEntry, HistoryPage, MicDevice, ModelInfo,
-    Settings, Snippet, Stats, Transform, EV_SETTINGS_CHANGED,
+    new_id, now_ms, DictationMode, DictationState, DictionaryEntry, HardwareProfile, HistoryEntry, HistoryPage,
+    LocalModelFit, MicDevice, ModelInfo, Settings, Snippet, Stats, Transform, EV_SETTINGS_CHANGED,
 };
 
 // ---------- Settings ----------
@@ -63,6 +63,53 @@ pub fn test_provider(provider: String, api_key: String) -> Result<String, String
 #[tauri::command]
 pub fn list_models(provider: String, refresh: bool) -> Result<Vec<ModelInfo>, String> {
     crate::stt::list_models(&provider, refresh)
+}
+
+// ---------- Local model library ----------
+
+/// RAM, CPU and GPU of this machine, used to score local models.
+#[tauri::command]
+pub fn local_hardware() -> HardwareProfile {
+    crate::local_models::hardware()
+}
+
+/// The curated local model catalogue, scored for this PC, best pick first.
+#[tauri::command]
+pub fn list_local_models() -> Vec<LocalModelFit> {
+    crate::local_models::library()
+}
+
+/// Download a curated model into the models folder. Progress is streamed to the UI.
+#[tauri::command]
+pub async fn download_local_model(
+    id: String,
+    on_progress: tauri::ipc::Channel<crate::local_models::Progress>,
+) -> Result<LocalModelFit, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        crate::local_models::download(&id, |value| {
+            let _ = on_progress.send(value);
+        })
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
+/// Delete a downloaded model and return the refreshed catalogue.
+#[tauri::command]
+pub fn remove_local_model(id: String) -> Result<Vec<LocalModelFit>, String> {
+    crate::local_models::remove(&id)
+}
+
+/// Open the folder downloaded models live in, for use with a local server.
+#[tauri::command]
+pub fn open_models_dir() -> Result<(), String> {
+    let dir = crate::local_models::models_dir();
+    std::fs::create_dir_all(&dir).map_err(|e| format!("Could not create the models folder: {e}"))?;
+    std::process::Command::new("explorer")
+        .arg(dir.as_os_str())
+        .spawn()
+        .map_err(|e| format!("Could not open the folder: {e}"))?;
+    Ok(())
 }
 
 #[tauri::command]
