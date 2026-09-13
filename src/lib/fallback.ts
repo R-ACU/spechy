@@ -2,7 +2,7 @@
 // The Tauri `invoke` bridge does not exist in a plain browser, so every backend call
 // goes through `safe()` and the view renders an empty state instead of crashing.
 // TESTCODE (2026-09-13): `?mock=1` additionally feeds sample data for visual checks.
-import type { DictionaryEntry, HardwareProfile, HistoryEntry, HistoryPage, LocalModelFit, MicDevice, ModelInfo, ModelSource, Settings, Snippet, Stats } from "./ipc";
+import type { DictionaryEntry, HardwareProfile, HistoryEntry, HistoryPage, LocalModelFit, LocalServerStatus, MicDevice, ModelInfo, ModelSource, Settings, Snippet, Stats } from "./ipc";
 
 export const MOCK = import.meta.env.DEV && typeof location !== "undefined" && new URLSearchParams(location.search).get("mock") === "1";
 /** TESTCODE (2026-09-13): `?mock=1&onboarding=1` starts the shell in the first run flow. */
@@ -43,6 +43,7 @@ export const defaultSettings: Settings = {
     polishProvider: "openrouter",
     groqPolishModel: "llama-3.3-70b-versatile",
     customSttBaseUrl: "",
+    customSttApi: "openai",
     customSttApiKey: "",
     customSttModel: "",
     customPolishBaseUrl: "",
@@ -171,6 +172,19 @@ export const mockHardware: HardwareProfile = {
   gpuVendor: "nvidia",
   gpus: [{ name: "NVIDIA GeForce RTX 4070", vramMb: 12_288, vendor: "nvidia" }],
   modelsDir: "C:\\Users\\alex\\AppData\\Roaming\\com.remo.spechy\\models",
+};
+
+export const mockLocalServer: LocalServerStatus = {
+  installed: true,
+  installedFlavors: ["cuda", "cpu"],
+  preferredFlavor: "cuda",
+  running: true,
+  flavor: "cuda",
+  port: 8178,
+  modelId: "ggml-large-v3-turbo",
+  modelPath: "C:\\Users\\alex\\AppData\\Roaming\\com.remo.spechy\\models\\ggml-large-v3-turbo.bin",
+  build: "b5130",
+  logTail: ["whisper_backend_init_gpu: device 0: CUDA0 (type: 1)", "whisper server listening at http://127.0.0.1:8178"],
 };
 
 const localModel = (

@@ -7,6 +7,7 @@ pub mod db;
 pub mod hardware;
 pub mod hotkey;
 pub mod local_models;
+pub mod local_server;
 pub mod model;
 pub mod paste;
 pub mod pill;
@@ -49,6 +50,10 @@ pub fn run() {
             commands::download_local_model,
             commands::remove_local_model,
             commands::open_models_dir,
+            commands::local_server_status,
+            commands::install_local_server,
+            commands::start_local_server,
+            commands::stop_local_server,
             commands::get_app_version,
             commands::check_for_updates,
             commands::download_update,
@@ -111,6 +116,12 @@ pub fn run() {
                 let _ = window.destroy();
             }
         })
-        .run(tauri::generate_context!())
-        .expect("Spechy could not start");
+        .build(tauri::generate_context!())
+        .expect("Spechy could not start")
+        .run(|_app, event| {
+            // Never leave the local whisper.cpp server running behind the app.
+            if let tauri::RunEvent::Exit = event {
+                crate::local_server::stop();
+            }
+        });
 }
