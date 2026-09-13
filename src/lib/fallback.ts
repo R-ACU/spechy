@@ -22,6 +22,7 @@ export const defaultSettings: Settings = {
   appLanguage: "en",
   theme: "system",
   dictationLanguages: ["en", "de"],
+  primaryLanguage: "en",
   microphone: "",
   hotkeys: { pushToTalk: "Ctrl+Win", handsFree: "Ctrl+Win+Space", command: "Ctrl+Alt", pasteLast: "Shift+Alt+Z" },
   launchAtLogin: false,

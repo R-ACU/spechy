@@ -20,7 +20,8 @@ const OPENROUTER_SYSTEM: &str = "You are a transcription engine. Output only the
 
 pub struct SttRequest<'a> {
     pub wav: &'a [u8],
-    pub languages: &'a [String],
+    /// The language the user speaks, or `None` for provider auto-detection.
+    pub language: Option<&'a str>,
     /// Dictionary words handed to the model as a vocabulary hint.
     pub vocabulary: &'a [String],
     /// Partial requests come from the live transcript while recording.
@@ -176,8 +177,8 @@ fn transcribe_openai_compatible(
         ("response_format", "json"),
         ("temperature", "0"),
     ];
-    if req.languages.len() == 1 {
-        fields.push(("language", req.languages[0].as_str()));
+    if let Some(language) = req.language {
+        fields.push(("language", language));
     }
     if !prompt.is_empty() {
         fields.push(("prompt", prompt.as_str()));
@@ -208,8 +209,8 @@ fn transcribe_whisper_cpp(base_url: &str, req: &SttRequest) -> Result<String, St
     let boundary = format!("----spechy{}", crate::model::now_ms());
     let prompt = vocabulary_prompt(req.vocabulary);
     let mut fields: Vec<(&str, &str)> = vec![("response_format", "json"), ("temperature", "0")];
-    if req.languages.len() == 1 {
-        fields.push(("language", req.languages[0].as_str()));
+    if let Some(language) = req.language {
+        fields.push(("language", language));
     }
     if !prompt.is_empty() {
         fields.push(("prompt", prompt.as_str()));
@@ -232,8 +233,8 @@ fn transcribe_whisper_cpp(base_url: &str, req: &SttRequest) -> Result<String, St
 fn transcribe_openrouter(p: &Providers, req: &SttRequest) -> Result<String, String> {
     let audio = base64::engine::general_purpose::STANDARD.encode(req.wav);
     let mut instruction = String::from("Transcribe this audio verbatim.");
-    if req.languages.len() == 1 {
-        instruction.push_str(&format!(" The language is {}.", req.languages[0]));
+    if let Some(language) = req.language {
+        instruction.push_str(&format!(" The language is {language}. Transcribe in that language, never translate."));
     }
     let vocabulary = vocabulary_prompt(req.vocabulary);
     if !vocabulary.is_empty() {

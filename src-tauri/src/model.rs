@@ -339,6 +339,10 @@ pub struct Settings {
     pub theme: String,
     /// Whisper language hints, e.g. ["de", "en"]. Empty = auto.
     pub dictation_languages: Vec<String>,
+    /// The language the user mainly speaks, sent to the transcriber so fast or
+    /// mixed speech cannot be detected as a third language. "auto" leaves the
+    /// detection to the provider; empty falls back to the first dictation language.
+    pub primary_language: String,
     /// Microphone device name; empty = system default.
     pub microphone: String,
     pub hotkeys: Hotkeys,
@@ -366,6 +370,7 @@ impl Default for Settings {
             app_language: "en".into(),
             theme: "system".into(),
             dictation_languages: vec!["de".into(), "en".into()],
+            primary_language: String::new(),
             microphone: String::new(),
             hotkeys: Hotkeys::default(),
             launch_at_login: false,
@@ -380,6 +385,22 @@ impl Default for Settings {
             style: StyleSettings::default(),
             scratchpad_pinned: false,
             onboarded: false,
+        }
+    }
+}
+
+impl Settings {
+    /// The language code to hand the transcriber, or `None` for auto-detection.
+    /// Without this, fast or mixed speech is sometimes detected as a language the
+    /// user does not speak at all.
+    pub fn spoken_language(&self) -> Option<&str> {
+        match self.primary_language.trim() {
+            "auto" => None,
+            "" => match self.dictation_languages.first() {
+                Some(first) if !first.trim().is_empty() => Some(first.trim()),
+                _ => None,
+            },
+            chosen => Some(chosen),
         }
     }
 }
@@ -500,4 +521,27 @@ pub fn now_ms() -> i64 {
 
 pub fn new_id() -> String {
     uuid::Uuid::new_v4().to_string()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn spoken_language_follows_the_setting_then_the_first_dictation_language() {
+        let mut settings = Settings::default();
+        // Empty setting: the first dictation language, so mixed German and English
+        // speech is still transcribed as German instead of being guessed.
+        assert_eq!(settings.spoken_language(), Some("de"));
+
+        settings.primary_language = "en".into();
+        assert_eq!(settings.spoken_language(), Some("en"));
+
+        settings.primary_language = "auto".into();
+        assert_eq!(settings.spoken_language(), None);
+
+        settings.primary_language = String::new();
+        settings.dictation_languages.clear();
+        assert_eq!(settings.spoken_language(), None);
+    }
 }

@@ -12,6 +12,12 @@ const LANG_OPTIONS = [
   { value: "", label: "Auto-detect" },
 ];
 
+const PRIMARY_LANG_OPTIONS = [
+  { value: "de", label: "German" },
+  { value: "en", label: "English" },
+  { value: "auto", label: "Let the model decide" },
+];
+
 const THEME_OPTIONS = [
   { value: "system", label: "System" },
   { value: "light", label: "Light" },
@@ -31,6 +37,9 @@ export default function General() {
   ];
 
   const langValue = settings.dictationLanguages.join(",");
+  // An empty setting follows the first dictation language, which is what the
+  // backend does too.
+  const primaryValue = settings.primaryLanguage || settings.dictationLanguages[0] || "auto";
 
   return (
     <>
@@ -56,6 +65,15 @@ export default function General() {
             value={langValue}
             options={LANG_OPTIONS}
             onChange={(v) => void update({ dictationLanguages: v ? v.split(",") : [] })}
+            className="set-listbox"
+          />
+        </Row>
+
+        <Row label="Main language" sub="The language you mostly speak. Sent to the transcriber so fast or mixed speech is not mistaken for another language.">
+          <Listbox
+            value={primaryValue}
+            options={PRIMARY_LANG_OPTIONS}
+            onChange={(v) => void update({ primaryLanguage: v })}
             className="set-listbox"
           />
         </Row>

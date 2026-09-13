@@ -121,6 +121,8 @@ export interface Settings {
   appLanguage: "en" | "de";
   theme: "system" | "light" | "dark";
   dictationLanguages: string[];
+  /** Language the user mainly speaks: "de", "en", "auto", or "" to follow the first dictation language. */
+  primaryLanguage: string;
   microphone: string;
   hotkeys: Hotkeys;
   launchAtLogin: boolean;

@@ -154,6 +154,10 @@ static SUPPRESS_PTT: AtomicBool = AtomicBool::new(false);
 static PTT_GENERATION: AtomicU64 = AtomicU64::new(0);
 /// True while a PttDown has actually been handed to the user callback.
 static PTT_EMITTED: AtomicBool = AtomicBool::new(false);
+/// True while a hands-free dictation is recording. The push-to-talk chord then
+/// only submits it, so it must fire at once: a short tap would otherwise fall
+/// through the grace period or a still-armed suppression and do nothing.
+static HANDS_FREE_RUNNING: AtomicBool = AtomicBool::new(false);
 
 /// A pending press waits this long so that a longer chord (for example
 /// Ctrl+Win+Shift) can still take over before push-to-talk starts.
@@ -162,6 +166,8 @@ const PTT_GRACE_MS: u64 = 90;
 #[derive(Debug, Clone, Copy)]
 enum Message {
     PasteLast,
+    /// The push-to-talk chord while hands-free records: submit without waiting.
+    PttSubmit,
     PttPending(u64),
     PttReleased,
     HandsFree,
@@ -188,6 +194,14 @@ fn push(message: Message) {
 
 pub fn set_active(active: bool) {
     ACTIVE.store(active, Ordering::SeqCst);
+    if !active {
+        HANDS_FREE_RUNNING.store(false, Ordering::SeqCst);
+    }
+}
+
+/// Told by the pipeline whenever a hands-free dictation starts or ends.
+pub fn set_hands_free_running(running: bool) {
+    HANDS_FREE_RUNNING.store(running, Ordering::SeqCst);
 }
 
 // ------------------------------------------------------------------ key state
@@ -373,6 +387,21 @@ unsafe fn handle_key(vk: u16, is_down: bool) -> bool {
 
     // Push-to-talk. Never swallowed: other apps must keep seeing the modifiers.
     if !ptt.is_empty() && ptt.contains(&vk) {
+        // A running hands-free dictation ends on this chord alone. No grace period
+        // and no suppression check here: the press is a submit, not a start, so a
+        // quick tap must work even right after the hands-free chord.
+        if is_down
+            && HANDS_FREE_RUNNING.load(Ordering::SeqCst)
+            && !HANDS_FREE_LATCH.load(Ordering::SeqCst)
+            && all_held(&ptt, vk)
+        {
+            HANDS_FREE_RUNNING.store(false, Ordering::SeqCst);
+            PTT_GENERATION.fetch_add(1, Ordering::SeqCst);
+            PTT_HELD.store(false, Ordering::SeqCst);
+            SUPPRESS_PTT.store(true, Ordering::SeqCst);
+            push(Message::PttSubmit);
+            return false;
+        }
         if is_down
             && !PTT_HELD.load(Ordering::SeqCst)
             && !CMD_HELD.load(Ordering::SeqCst)
@@ -430,6 +459,7 @@ pub fn start(
             let Some(message) = next else { break };
             match message {
                 Message::PasteLast => on_event(HotkeyEvent::PasteLast),
+                Message::PttSubmit => on_event(HotkeyEvent::PttDown),
                 Message::PttPending(generation) => {
                     thread::sleep(Duration::from_millis(PTT_GRACE_MS));
                     if PTT_GENERATION.load(Ordering::SeqCst) == generation

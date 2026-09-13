@@ -177,6 +177,13 @@ pub fn build_system_prompt(ctx: &PolishContext) -> String {
     p.push_str("Rules:\n");
     p.push_str("- Output only the resulting text. Never answer the content, never add anything, never comment.\n");
     p.push_str("- Keep the language of the speaker. German stays German, English stays English.\n");
+    // A misdetected transcript must not survive the cleanup in a language the user
+    // does not even speak.
+    if let Some(language) = ctx.settings.spoken_language() {
+        p.push_str(&format!(
+            "- The speaker mainly speaks {language}. Write the result in {language}, keeping single foreign words as spoken. Never answer in another language.\n"
+        ));
+    }
     p.push_str("- Fix punctuation, capitalization and obvious transcription errors.\n");
     if ctx.settings.style.keep_fillers {
         p.push_str("- Keep filler words, repetitions and false starts as spoken.\n");

@@ -224,6 +224,9 @@ pub fn start(mode: DictationMode) -> Result<(), String> {
     }
 
     crate::hotkey::set_active(true);
+    // The push-to-talk chord alone submits a hands-free dictation, so the hook has
+    // to know that one is running.
+    crate::hotkey::set_hands_free_running(mode == DictationMode::HandsFree);
     sound(SoundKind::Start);
     crate::pill::set_state(PillState::Recording { level: 0.0, live_text: String::new() });
     emit_state(&state());
@@ -261,7 +264,7 @@ fn spawn_partial_loop(generation: u64) {
             &settings.providers,
             crate::stt::SttRequest {
                 wav: &wav,
-                languages: &settings.dictation_languages,
+                language: settings.spoken_language(),
                 vocabulary: &vocabulary,
                 partial: true,
             },
@@ -340,7 +343,7 @@ fn spawn_segment_loop(generation: u64) {
             &settings.providers,
             crate::stt::SttRequest {
                 wav: &wav,
-                languages: &settings.dictation_languages,
+                language: settings.spoken_language(),
                 vocabulary: &vocabulary,
                 partial: false,
             },
@@ -464,7 +467,7 @@ fn finish(
             &settings.providers,
             crate::stt::SttRequest {
                 wav: &wav,
-                languages: &settings.dictation_languages,
+                language: settings.spoken_language(),
                 vocabulary: &vocabulary,
                 partial: false,
             },
