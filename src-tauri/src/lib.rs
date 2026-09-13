@@ -1,0 +1,106 @@
+//! Spechy: voice dictation for Windows. Entry point of the library crate.
+
+pub mod audio;
+pub mod autostart;
+pub mod commands;
+pub mod db;
+pub mod hotkey;
+pub mod model;
+pub mod paste;
+pub mod pill;
+pub mod pipeline;
+pub mod polish;
+pub mod settings;
+pub mod sound;
+pub mod stt;
+pub mod tray;
+pub mod winutil;
+pub mod updates;
+
+use tauri::{Manager, WindowEvent};
+
+pub fn run() {
+    if std::env::var("RUST_LOG").is_err() {
+        std::env::set_var("RUST_LOG", "info");
+    }
+    env_logger::init();
+
+    let settings = settings::load();
+    if let Err(e) = db::init() {
+        log::error!("the database could not be opened: {e}");
+    }
+    let start_minimized = std::env::args().any(|a| a == "--minimized");
+
+    tauri::Builder::default()
+        .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
+            tray::show_main_window(app);
+        }))
+        .invoke_handler(tauri::generate_handler![
+            commands::get_settings,
+            commands::suspend_hotkeys,
+            commands::set_settings,
+            commands::list_microphones,
+            commands::test_provider,
+            commands::list_models,
+            commands::get_app_version,
+            commands::check_for_updates,
+            commands::get_state,
+            commands::start_dictation,
+            commands::stop_dictation,
+            commands::cancel_dictation,
+            commands::list_history,
+            commands::delete_history,
+            commands::set_history_flag,
+            commands::update_history_text,
+            commands::repolish_history,
+            commands::clear_history,
+            commands::list_dictionary,
+            commands::add_dictionary,
+            commands::update_dictionary,
+            commands::delete_dictionary,
+            commands::list_snippets,
+            commands::add_snippet,
+            commands::update_snippet,
+            commands::delete_snippet,
+            commands::list_transforms,
+            commands::add_transform,
+            commands::update_transform,
+            commands::delete_transform,
+            commands::apply_transform,
+            commands::get_scratchpad,
+            commands::set_scratchpad,
+            commands::get_stats,
+            commands::export_data,
+            commands::get_data_dir,
+            commands::open_data_dir,
+            commands::copy_to_clipboard,
+            commands::open_url,
+            commands::window_minimize,
+            commands::window_toggle_maximize,
+            commands::window_close,
+        ])
+        .setup(move |app| {
+            pipeline::init(app.handle().clone());
+            if let Err(e) = tray::init(app.handle()) {
+                log::error!("{e}");
+            }
+            if let Err(e) = autostart::set_enabled(settings.launch_at_login) {
+                log::warn!("autostart could not be synced: {e}");
+            }
+            if start_minimized {
+                if let Some(window) = app.get_webview_window("main") {
+                    // Destroy instead of hide: a living WebView2 costs hundreds of megabytes.
+                    let _ = window.destroy();
+                }
+            }
+            Ok(())
+        })
+        .on_window_event(|window, event| {
+            if let WindowEvent::CloseRequested { api, .. } = event {
+                api.prevent_close();
+                let _ = window.destroy();
+            }
+        })
+        .run(tauri::generate_context!())
+        .expect("Spechy could not start");
+}

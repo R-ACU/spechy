@@ -1,0 +1,18 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Spechy</title>
+    <!-- Paint the window ground before the bundle runs, so the Tauri window does not flash.
+         App.tsx sets html[data-theme] from the cached choice on its first render. -->
+    <style>
+      html { background: #f3f1ee; color-scheme: light; }
+      html[data-theme="dark"] { background: #141311; color-scheme: dark; }
+    </style>
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
+</html>
