@@ -79,6 +79,18 @@ Change them in **Settings > General > Shortcuts**. Paste last dictation uses the
 
 Use **Settings > Providers** to pick your models. A custom server can run on your own machine or infrastructure. For fully local processing, configure local servers for **both** transcription and cleanup. Leave the key empty if your server does not require authentication.
 
+### Local model library
+
+**Settings > Providers > Custom server > Local model library** lists curated Whisper models for [whisper.cpp](https://github.com/ggerganov/whisper.cpp) and scores every one against your PC: total RAM, free RAM, CPU cores and dedicated VRAM, read from Windows itself. Each card says whether the model **runs great**, **runs well**, **just fits** or is **too large**, rates accuracy, speed and German quality, and can download the GGML file into `%APPDATA%\com.remo.spechy\models`. Downloads come from a pinned whisper.cpp revision and are verified against the published SHA-256 before the file is kept.
+
+Spechy does not run a speech server by itself. A card copies the matching command, for example:
+
+```powershell
+whisper-server -m "%APPDATA%\com.remo.spechy\models\ggml-large-v3-turbo.bin" --host 127.0.0.1 --port 8080
+```
+
+Then set the custom server address to `http://127.0.0.1:8080/v1`, press **Test** and dictate. **Use this model** fills in the model and address for you. When you dictate German, the library weights German accuracy first, so Large v3 Turbo or Large v3 are recommended over the small English-focused builds.
+
 ### What stays local
 
 Settings, history, dictionary and snippets live in `%APPDATA%\com.remo.spechy`. API keys are stored in local settings and excluded from data exports. No keys are bundled with the app.
@@ -124,6 +136,8 @@ src-tauri/src/           Rust desktop application
   audio.rs               Microphone capture
   pipeline.rs            Dictation state machine
   stt.rs / polish.rs     Transcription and text cleanup
+  local_models.rs        Curated local model catalogue, fit scoring and downloads
+  hardware.rs            RAM, CPU and GPU detection for the model library
   paste.rs / pill.rs     Text insertion and native recording UI
   db.rs / settings.rs    Local persistence
   updates.rs             Public release checks
