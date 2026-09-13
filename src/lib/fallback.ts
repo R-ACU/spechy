@@ -2,7 +2,7 @@
 // The Tauri `invoke` bridge does not exist in a plain browser, so every backend call
 // goes through `safe()` and the view renders an empty state instead of crashing.
 // TESTCODE (2026-09-13): `?mock=1` additionally feeds sample data for visual checks.
-import type { DictionaryEntry, HistoryEntry, HistoryPage, MicDevice, ModelInfo, ModelSource, Settings, Snippet, Stats } from "./ipc";
+import type { DictionaryEntry, HardwareProfile, HistoryEntry, HistoryPage, LocalModelFit, MicDevice, ModelInfo, ModelSource, Settings, Snippet, Stats } from "./ipc";
 
 export const MOCK = import.meta.env.DEV && typeof location !== "undefined" && new URLSearchParams(location.search).get("mock") === "1";
 /** TESTCODE (2026-09-13): `?mock=1&onboarding=1` starts the shell in the first run flow. */
@@ -158,4 +158,59 @@ export const mockMicrophones: MicDevice[] = [
   { name: "Microphone Array (Realtek(R) Audio)", isDefault: true },
   { name: "Headset (WH-1000XM4 Hands-Free)", isDefault: false },
   { name: "Webcam C920 (USB Audio)", isDefault: false },
+];
+
+/** TESTCODE (2026-09-13): hardware and local model library for the browser preview. */
+export const mockHardware: HardwareProfile = {
+  totalRamMb: 32_768,
+  availableRamMb: 18_400,
+  cpuCores: 16,
+  cpuName: "AMD Ryzen 9 5950X 16-Core Processor",
+  gpuName: "NVIDIA GeForce RTX 4070",
+  vramMb: 12_288,
+  gpuVendor: "nvidia",
+  gpus: [{ name: "NVIDIA GeForce RTX 4070", vramMb: 12_288, vendor: "nvidia" }],
+  modelsDir: "C:\\Users\\alex\\AppData\\Roaming\\com.remo.spechy\\models",
+};
+
+const localModel = (
+  id: string,
+  name: string,
+  params: string,
+  sizeBytes: number,
+  ramMb: number,
+  vramMb: number,
+  quality: number,
+  speed: number,
+  german: number,
+  note: string,
+): LocalModelFit["model"] => ({
+  id,
+  name,
+  backend: "whisper_cpp",
+  family: id.includes("large") ? "Whisper Large v3" : "Whisper",
+  params,
+  sizeBytes,
+  // Browser-only placeholder; the real checksums live in src-tauri/src/local_models.rs.
+  sha256: "0".repeat(64),
+  ramMb,
+  vramMb,
+  quality,
+  speed,
+  german,
+  languages: "99 languages",
+  englishOnly: false,
+  license: "MIT (OpenAI Whisper)",
+  note,
+  file: `${id}.bin`,
+  url: `https://huggingface.co/ggerganov/whisper.cpp/resolve/main/${id}.bin`,
+});
+
+export const mockLocalModels: LocalModelFit[] = [
+  { model: localModel("ggml-large-v3-turbo", "Whisper Large v3 Turbo", "809M", 1_624_555_275, 2600, 2100, 4, 4, 4, "Best speed-to-accuracy ratio. Very good German and runs comfortably on an 8 GB GPU."), fit: "great", score: 178, recommended: true, installed: true, installedPath: "C:\\Users\\alex\\AppData\\Roaming\\com.remo.spechy\\models\\ggml-large-v3-turbo.bin", reason: "Runs on your NVIDIA GeForce RTX 4070" },
+  { model: localModel("ggml-large-v3", "Whisper Large v3", "1550M", 3_095_033_483, 4200, 3500, 5, 2, 5, "Highest accuracy, especially for German and mixed German/English speech. Wants a strong GPU."), fit: "great", score: 172, recommended: false, installed: false, installedPath: null, reason: "Runs on your NVIDIA GeForce RTX 4070" },
+  { model: localModel("ggml-medium", "Whisper Medium", "769M", 1_533_763_059, 2400, 2000, 4, 2, 4, "Noticeably better German and punctuation. Slow on a CPU, comfortable on a GPU."), fit: "great", score: 150, recommended: false, installed: false, installedPath: null, reason: "Runs on your NVIDIA GeForce RTX 4070" },
+  { model: localModel("ggml-small", "Whisper Small", "244M", 487_601_967, 1200, 900, 3, 4, 3, "Good all-rounder for notebooks without a dedicated GPU. Usable German accuracy."), fit: "great", score: 140, recommended: false, installed: false, installedPath: null, reason: "Runs on your NVIDIA GeForce RTX 4070" },
+  { model: localModel("ggml-base", "Whisper Base", "74M", 147_951_465, 700, 500, 2, 5, 2, "A small step up from Tiny. Understands simple German, but still misses words."), fit: "great", score: 128, recommended: false, installed: false, installedPath: null, reason: "Runs on your NVIDIA GeForce RTX 4070" },
+  { model: localModel("ggml-tiny", "Whisper Tiny", "39M", 77_691_713, 500, 400, 1, 5, 1, "Fastest option and the smallest download. Fine for short English notes, rough on German."), fit: "great", score: 118, recommended: false, installed: false, installedPath: null, reason: "Runs on your NVIDIA GeForce RTX 4070" },
 ];

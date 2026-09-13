@@ -49,6 +49,7 @@ windows = { version = "0.58", features = [
   "Win32_System_Ole",
   "Win32_Media_Audio",
   "Win32_System_ProcessStatus",
+  "Win32_System_SystemInformation",
 ] }
 
 # The pill rasterizes per pixel; unoptimized debug builds stutter, so keep some optimization in dev.

@@ -76,14 +76,14 @@ export function Listbox({ value, options, onChange, placeholder = "Select", clas
   );
 }
 
-export function Dialog({ title, onClose, children, width }: { title: string; onClose: () => void; children: ReactNode; width?: number }) {
+export function Dialog({ title, onClose, children, width, className = "" }: { title: string; onClose: () => void; children: ReactNode; width?: number; className?: string }) {
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => { if (e.key === "Escape") onClose(); };
     document.addEventListener("keydown", onKey);
     return () => document.removeEventListener("keydown", onKey);
   }, [onClose]);
   return (
-    <div className="dialog-backdrop" onMouseDown={(e) => { if (e.target === e.currentTarget) onClose(); }}>
+    <div className={`dialog-backdrop ${className}`} onMouseDown={(e) => { if (e.target === e.currentTarget) onClose(); }}>
       <div className="dialog" role="dialog" aria-modal="true" aria-label={title} style={width ? { width } : undefined}>
         <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
           <h3>{title}</h3>

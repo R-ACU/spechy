@@ -44,6 +44,58 @@ export interface Providers {
 
 export interface ModelInfo { id: string; name: string; audio: boolean; free: boolean }
 
+/** ---------- Local model library ---------- */
+
+/** How well a model fits the machine it was scored on. */
+export type LocalFit = "great" | "good" | "tight" | "too_big";
+
+export interface GpuInfo { name: string; vramMb: number; vendor: string }
+
+/** Best-effort hardware profile; missing values are 0 or empty, never "no PC". */
+export interface HardwareProfile {
+  totalRamMb: number;
+  availableRamMb: number;
+  cpuCores: number;
+  cpuName: string;
+  gpuName: string;
+  /** Dedicated memory usable for inference; 0 for integrated graphics or unknown. */
+  vramMb: number;
+  gpuVendor: string;
+  gpus: GpuInfo[];
+  modelsDir: string;
+}
+
+export interface LocalModel {
+  id: string;
+  name: string;
+  backend: string;
+  family: string;
+  params: string;
+  sizeBytes: number;
+  sha256: string;
+  ramMb: number;
+  vramMb: number;
+  quality: number;
+  speed: number;
+  german: number;
+  languages: string;
+  englishOnly: boolean;
+  license: string;
+  note: string;
+  file: string;
+  url: string;
+}
+
+export interface LocalModelFit {
+  model: LocalModel;
+  fit: LocalFit;
+  score: number;
+  recommended: boolean;
+  installed: boolean;
+  installedPath: string | null;
+  reason: string;
+}
+
 export type Tone = "neutral" | "formal" | "casual";
 export interface AppStyleRule { id: string; appMatch: string; tone: Tone; note: string }
 export interface StyleSettings { defaultTone: Tone; appRules: AppStyleRule[]; customRules: string; keepFillers: boolean }
@@ -97,6 +149,16 @@ export const api = {
   listMicrophones: () => invoke<MicDevice[]>("list_microphones"),
   testProvider: (provider: ModelSource, apiKey: string) => invoke<string>("test_provider", { provider, apiKey }),
   listModels: (provider: ModelSource, refresh = false) => invoke<ModelInfo[]>("list_models", { provider, refresh }),
+  // local model library
+  localHardware: () => invoke<HardwareProfile>("local_hardware"),
+  listLocalModels: () => invoke<LocalModelFit[]>("list_local_models"),
+  downloadLocalModel: (id: string, onProgress: (progress: { downloaded: number; total: number | null }) => void) => {
+    const channel = new Channel<{ downloaded: number; total: number | null }>();
+    channel.onmessage = onProgress;
+    return invoke<LocalModelFit>("download_local_model", { id, onProgress: channel });
+  },
+  removeLocalModel: (id: string) => invoke<LocalModelFit[]>("remove_local_model", { id }),
+  openModelsDir: () => invoke<void>("open_models_dir"),
   getAppVersion: () => invoke<string>("get_app_version"),
   // dictation control (UI buttons; hotkeys work without these)
   getState: () => invoke<DictationState>("get_state"),
