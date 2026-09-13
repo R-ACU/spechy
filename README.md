@@ -87,7 +87,7 @@ Cloud transcription sends audio to the selected provider; cloud cleanup sends te
 
 ## Updates
 
-Open **Help > Updates** and choose **Update now**. Spechy downloads and verifies the update inside the app, installs it in the background, and restarts automatically. Your settings and history are retained. Versions before 0.1.2 need one manual installer download to gain in-app downloads; one-click background installation is available from 0.1.3.
+The notification bell shows a **1** when a new update is available, with one brief animation and no sound. Click the bell, then the update notification to open **Help > Updates**, and choose **Update now**. Spechy downloads and verifies the update inside the app, installs it in the background, and restarts automatically. Your settings and history are retained. Versions before 0.1.2 need one manual installer download to gain in-app downloads; one-click background installation is available from 0.1.3.
 
 **Updates start only when you choose Update now.** The [permanent download link](https://github.com/R-ACU/spechy-releases/releases/latest/download/Spechy-Setup.exe) always points to the latest published installer, so it can also be used on a website.
 
