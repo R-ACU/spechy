@@ -1,7 +1,6 @@
 import { useEffect, useState } from "react";
 import { Copy, Pencil, Plus, Trash2 } from "lucide-react";
 import { api, type Transform } from "../lib/ipc";
-import { safeCall } from "../lib/mock";
 import { useStore } from "../lib/store";
 import { Button, Dialog, IconButton, Listbox } from "../components/ui";
 
@@ -19,9 +18,9 @@ export default function Transforms() {
   const [result, setResult] = useState("");
   const [running, setRunning] = useState(false);
 
-  const load = () => { void safeCall(() => api.listTransforms(), "transforms", []).then(setItems); };
+  const load = () => { void api.listTransforms().then(setItems).catch((error) => toast({ kind: "error", message: `Could not load transforms: ${String(error)}` })); };
   useEffect(() => { load(); }, []);
-  useEffect(() => { if (!pick && items.length) setPick(items[0].id); }, [items, pick]);
+  useEffect(() => { if (!items.some((item) => item.id === pick)) setPick(items[0]?.id ?? ""); }, [items, pick]);
 
   const openNew = () => { setCreating(true); setEditing(null); setName(""); setPrompt(""); };
   const openEdit = (t: Transform) => { setCreating(false); setEditing(t); setName(t.name); setPrompt(t.prompt); };
@@ -34,10 +33,10 @@ export default function Transforms() {
       else await api.addTransform(name.trim(), prompt.trim());
       load();
       toast({ kind: "success", message: editing ? "Transform updated" : "Transform added" });
+      close();
     } catch {
       toast({ kind: "error", message: "Could not save the transform" });
     }
-    close();
   };
 
   const remove = async (id: string) => {
@@ -48,11 +47,12 @@ export default function Transforms() {
   const run = async () => {
     if (!pick || !input.trim()) return;
     setRunning(true);
+    setResult("");
     try {
       const out = await api.applyTransform(pick, input);
       setResult(out);
-    } catch {
-      toast({ kind: "error", message: "The transform could not run" });
+    } catch (error) {
+      toast({ kind: "error", message: `The transform could not run: ${String(error)}` });
     }
     setRunning(false);
   };
@@ -71,7 +71,7 @@ export default function Transforms() {
         <Button onClick={openNew}><Plus size={16} /> Add new</Button>
       </div>
       <p className="muted tr-intro">
-        A transform is a saved instruction that rewrites a piece of text. Pick one in the pill while dictating, or try it here.
+        A transform is a saved instruction that rewrites a piece of text. Paste or dictate text here, pick a transform and run it. Uses your cleanup provider from Settings.
       </p>
 
       <div className="tr-grid rise">
@@ -104,12 +104,13 @@ export default function Transforms() {
             rows={6}
             placeholder="Paste or dictate text"
             value={input}
+            disabled={running}
             onChange={(e) => setInput(e.target.value)}
           />
           <Listbox
             value={pick}
             options={items.map((t) => ({ value: t.id, label: t.name }))}
-            onChange={setPick}
+            onChange={(value) => { if (!running) { setPick(value); setResult(""); } }}
             placeholder="Pick a transform"
           />
           <Button onClick={() => void run()} disabled={running || !pick || !input.trim()}>

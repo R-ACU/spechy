@@ -70,12 +70,10 @@ pub fn current() -> Settings {
 }
 
 /// Save new settings, apply the side effects (hotkeys, pill, autostart) and return the stored copy.
-pub fn set(s: Settings) -> Settings {
-    if let Err(e) = save(&s) {
-        log::error!("saving settings failed: {e}");
-    }
+pub fn set(s: Settings) -> Result<Settings, String> {
+    save(&s)?;
     apply_side_effects(&s);
-    s
+    Ok(s)
 }
 
 /// Push the settings into the subsystems that mirror them.

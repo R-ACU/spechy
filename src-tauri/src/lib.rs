@@ -104,6 +104,13 @@ pub fn run() {
                 let _ = window.destroy();
             }
         })
-        .run(tauri::generate_context!())
-        .expect("Spechy could not start");
+        .build(tauri::generate_context!())
+        .expect("Spechy could not start")
+        .run(|_app, event| {
+            // Closing the last webview must leave dictation and the tray running.
+            // Explicit exits (Quit and the updater) carry a code and remain allowed.
+            if let tauri::RunEvent::ExitRequested { code: None, api, .. } = event {
+                api.prevent_exit();
+            }
+        });
 }

@@ -606,7 +606,11 @@ fn stats_with(c: &Connection) -> Result<Stats, String> {
         .filter(|d| d.count > 0)
         .collect();
 
-    let mut days: Vec<String> = per_day.iter().map(|d| d.date.clone()).collect();
+    let mut days: Vec<String> = c.prepare(
+        "SELECT DISTINCT strftime('%Y-%m-%d', created_at / 1000, 'unixepoch', 'localtime') FROM history ORDER BY 1"
+    ).map_err(|e| e.to_string())?
+        .query_map([], |r| r.get(0)).map_err(|e| e.to_string())?
+        .collect::<Result<_, _>>().map_err(|e| e.to_string())?;
     s.streak_days = current_streak(&days, chrono::Local::now().date_naive());
     s.longest_streak = longest_streak(&mut days);
     s.per_day = per_day;
@@ -641,8 +645,8 @@ fn stats_with(c: &Connection) -> Result<Stats, String> {
     // per_app
     let mut stmt = c
         .prepare(
-            "SELECT app_name, COALESCE(SUM(word_count), 0), COUNT(*) FROM history
-             WHERE app_name <> '' GROUP BY app_name ORDER BY 2 DESC",
+            "SELECT app_name, COALESCE(SUM(word_count), 0), COUNT(*), app_title FROM history
+             WHERE app_name <> '' GROUP BY app_name, app_title ORDER BY 2 DESC",
         )
         .map_err(|e| format!("Could not read the statistics: {e}"))?;
     let per_app: Vec<AppStat> = stmt
@@ -651,7 +655,7 @@ fn stats_with(c: &Connection) -> Result<Stats, String> {
             let words: i64 = r.get(1)?;
             let count: i64 = r.get(2)?;
             Ok(AppStat {
-                category: crate::winutil::app_category(&app_name, "").to_string(),
+                category: crate::winutil::app_category(&app_name, &r.get::<_, String>(3)?).to_string(),
                 app_name,
                 words,
                 count,
@@ -660,8 +664,18 @@ fn stats_with(c: &Connection) -> Result<Stats, String> {
         .map_err(|e| format!("Could not read the statistics: {e}"))?
         .filter_map(|r| r.ok())
         .collect();
-    s.apps_used = per_app.len() as i64;
-    s.per_app = per_app;
+    s.apps_used = per_app.iter().map(|a| &a.app_name).collect::<std::collections::HashSet<_>>().len() as i64;
+    let mut grouped: HashMap<(String, String), AppStat> = HashMap::new();
+    for row in per_app {
+        let key = (row.app_name.clone(), row.category.clone());
+        let entry = grouped.entry(key).or_insert_with(|| AppStat {
+            app_name: row.app_name, category: row.category, ..Default::default()
+        });
+        entry.words += row.words;
+        entry.count += row.count;
+    }
+    s.per_app = grouped.into_values().collect();
+    s.per_app.sort_by(|a, b| b.words.cmp(&a.words).then_with(|| a.app_name.cmp(&b.app_name)).then_with(|| a.category.cmp(&b.category)));
 
     // top_words
     let mut stmt = c
@@ -785,5 +799,31 @@ mod tests {
         assert_eq!(word_diff_count("hallo welt", "hallo welt"), 0);
         assert_eq!(word_diff_count("hallo welt", "hallo schoene welt"), 1);
         assert_eq!(word_diff_count("aeh hallo welt", "hallo welt"), 1);
+    }
+
+    #[test]
+    fn browser_categories_use_the_recorded_title_without_double_counting_apps() {
+        let c = memory_db();
+        insert(&c, "mail", now_ms(), 10, 6000, "chrome.exe", "hello");
+        insert(&c, "ai", now_ms(), 20, 6000, "chrome.exe", "hello");
+        c.execute("UPDATE history SET app_title = 'Gmail' WHERE id = 'mail'", []).unwrap();
+        c.execute("UPDATE history SET app_title = 'ChatGPT' WHERE id = 'ai'", []).unwrap();
+        let s = stats_with(&c).unwrap();
+        assert_eq!(s.apps_used, 1);
+        assert_eq!(s.per_app.len(), 2);
+        assert!(s.per_app.iter().any(|a| a.category == "email" && a.words == 10));
+        assert!(s.per_app.iter().any(|a| a.category == "ai" && a.words == 20));
+    }
+
+    #[test]
+    fn longest_streak_includes_history_older_than_heatmap() {
+        let c = memory_db();
+        let old = now_ms() - 400 * 86_400_000;
+        for i in 0..3 {
+            insert(&c, &i.to_string(), old + i * 86_400_000, 10, 6000, "code.exe", "hello");
+        }
+        let s = stats_with(&c).unwrap();
+        assert_eq!(s.longest_streak, 3);
+        assert!(s.per_day.is_empty());
     }
 }

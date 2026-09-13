@@ -6,12 +6,6 @@ import { MOCK, mockHistoryPage, mockStats, safe } from "../lib/fallback";
 import { Button, Dialog, IconButton, Kbd, Menu, compactNumber, dayLabel, formatTime } from "../components/ui";
 
 const PAGE = 50;
-const MILESTONES = [100, 500, 1000, 2500, 5000, 10000, 25000, 50000];
-
-function milestoneFor(n: number): number {
-  for (const m of MILESTONES) if (n < m) return m;
-  return Math.ceil((n + 1) / 50000) * 50000;
-}
 
 function copyText(text: string, ok: () => void) {
   api.copyToClipboard(text).catch(() => navigator.clipboard?.writeText(text).catch(() => {}));
@@ -65,8 +59,7 @@ function Row({ entry, onChange, onDelete, onToast }: {
 
   const remove = () => {
     setMenu(false);
-    onDelete(entry.id);
-    api.deleteHistory(entry.id).catch(() => {});
+    api.deleteHistory(entry.id).then(() => onDelete(entry.id)).catch(() => onToast("Could not delete dictation"));
   };
 
   return (
@@ -184,12 +177,9 @@ export default function Home() {
     return out;
   }, [entries, lang]);
 
-  const onChange = (e: HistoryEntry) => setEntries((prev) => prev.map((x) => (x.id === e.id ? e : x)));
-  const onDelete = (id: string) => { setEntries((prev) => prev.filter((x) => x.id !== id)); setTotal((n) => Math.max(0, n - 1)); };
+  const onChange = (e: HistoryEntry) => { setEntries((prev) => prev.map((x) => (x.id === e.id ? e : x))); loadStats(); };
+  const onDelete = (id: string) => { setEntries((prev) => prev.filter((x) => x.id !== id)); setTotal((n) => Math.max(0, n - 1)); loadStats(); };
 
-  const fixes = stats?.dictionaryFixes ?? 0;
-  const milestone = milestoneFor(fixes);
-  const pct = Math.min(100, Math.round((fixes / milestone) * 100));
 
   return (
     <div className="page home">
@@ -241,11 +231,6 @@ export default function Home() {
             <div className="stat-line"><span className="stat-num">{compactNumber(stats?.totalWords ?? 0)}</span><span className="stat-label">{t("total words", lang)}</span></div>
             <div className="stat-line"><span className="stat-num">{stats?.wpm ?? 0}</span><span className="stat-label">{t("wpm", lang)}</span></div>
             <div className="stat-line"><span className="stat-num">{stats?.streakDays ?? 0}</span><span className="stat-label">{t("day streak", lang)}</span></div>
-            <div className="side-divider" />
-            <h3 className="side-title">Your dictionary</h3>
-            <p className="side-sub">Corrections applied so far</p>
-            <div className="progress"><div className="progress-fill" style={{ width: pct + "%" }} /></div>
-            <p className="side-foot">{Math.max(0, milestone - fixes)} to next milestone</p>
           </div>
         </aside>
       </div>

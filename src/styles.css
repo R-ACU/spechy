@@ -469,7 +469,7 @@ textarea.input { height: auto; padding: 10px 12px; resize: vertical; line-height
 .search-field.inline .search-input { width: 220px; height: 34px; }
 
 /* Home */
-.home-grid { display: grid; grid-template-columns: minmax(0, 1fr) 300px; gap: 36px; align-items: start; }
+.home-grid { display: grid; grid-template-columns: minmax(0, 1fr) 230px; gap: 28px; align-items: start; }
 .home-main { min-width: 0; }
 .day-group { margin-bottom: 28px; }
 .day-label { display: block; margin: 0 0 12px 2px; }
@@ -497,10 +497,11 @@ textarea.input { height: auto; padding: 10px 12px; resize: vertical; line-height
 
 /* Home side card */
 .home-side { position: sticky; top: 0; }
-.side-card { background: var(--surface-2); border-radius: var(--radius-lg); padding: 26px 24px; }
+.side-card { background: var(--surface-2); border-radius: var(--radius-lg); padding: 20px; }
 .stat-line { display: flex; align-items: baseline; gap: 10px; margin-bottom: 10px; }
-.stat-num { font-weight: 400; font-size: 34px; letter-spacing: -0.02em; line-height: 1.1; user-select: text; }
-.stat-label { color: var(--text-2); font-size: 15px; }
+.stat-num { font-weight: 400; font-size: 26px; letter-spacing: -0.02em; line-height: 1.2; user-select: text; }
+.stat-label { color: var(--text-2); font-size: 13px; }
+.stat-line:last-child { margin-bottom: 0; }
 .side-divider { height: 1px; background: var(--border-strong); margin: 22px -24px; }
 .side-title { margin: 0 0 6px; font-size: 19px; font-weight: 600; letter-spacing: -0.01em; }
 .side-sub { margin: 0 0 16px; color: var(--text-2); font-size: 14px; }

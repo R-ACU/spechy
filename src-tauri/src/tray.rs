@@ -78,14 +78,18 @@ fn on_menu_event<R: Runtime>(app: &AppHandle<R>, event: MenuEvent) {
         ID_PILL => {
             let mut settings = crate::settings::current();
             settings.show_pill_always = !settings.show_pill_always;
-            let stored = crate::settings::set(settings);
-            let _ = app.emit(EV_SETTINGS_CHANGED, &stored);
+            match crate::settings::set(settings) {
+                Ok(stored) => { let _ = app.emit(EV_SETTINGS_CHANGED, &stored); }
+                Err(error) => log::error!("Could not save pill setting: {error}"),
+            }
         }
         ID_AUTOSTART => {
             let mut settings = crate::settings::current();
             settings.launch_at_login = !settings.launch_at_login;
-            let stored = crate::settings::set(settings);
-            let _ = app.emit(EV_SETTINGS_CHANGED, &stored);
+            match crate::settings::set(settings) {
+                Ok(stored) => { let _ = app.emit(EV_SETTINGS_CHANGED, &stored); }
+                Err(error) => log::error!("Could not save autostart setting: {error}"),
+            }
         }
         ID_QUIT => app.exit(0),
         _ => {}

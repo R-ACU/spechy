@@ -41,7 +41,7 @@ pub fn set_settings(app: tauri::AppHandle, settings: Settings) -> Result<Setting
             return Err("Paste last dictation must not overlap another shortcut.".into());
         }
     }
-    let stored = crate::settings::set(settings);
+    let stored = crate::settings::set(settings)?;
     let _ = app.emit(EV_SETTINGS_CHANGED, &stored);
     Ok(stored)
 }
@@ -257,6 +257,9 @@ pub fn add_transform(name: String, prompt: String) -> Result<Transform, String> 
     if name.trim().is_empty() {
         return Err("The name must not be empty".into());
     }
+    if prompt.trim().is_empty() {
+        return Err("The prompt must not be empty".into());
+    }
     let transform = Transform {
         id: new_id(),
         name: name.trim().to_string(),
@@ -270,6 +273,9 @@ pub fn add_transform(name: String, prompt: String) -> Result<Transform, String> 
 
 #[tauri::command]
 pub fn update_transform(transform: Transform) -> Result<Transform, String> {
+    if transform.name.trim().is_empty() || transform.prompt.trim().is_empty() {
+        return Err("The name and prompt must not be empty".into());
+    }
     crate::db::upsert_transform(&transform)?;
     Ok(transform)
 }

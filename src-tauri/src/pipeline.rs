@@ -513,7 +513,6 @@ fn finish(
     let vibe = is_vibe_app(&settings, &target_process);
     let command_instruction = if mode == DictationMode::Command { Some(raw.as_str()) } else { None };
 
-    let dictionary_fixes = crate::polish::dictionary_fix_count(&raw, &dictionary);
     let polished = crate::polish::polish(crate::polish::PolishContext {
         raw: &raw,
         settings: &settings,
@@ -525,12 +524,12 @@ fn finish(
         selection: if mode == DictationMode::Command { Some(selection.as_str()) } else { None },
     });
 
-    let (text, used_dictionary, used_snippets, polish_failed) = match polished {
-        Ok(r) => (r.text, r.used_dictionary, r.used_snippets, false),
+    let (text, used_dictionary, used_snippets, dictionary_fixes, polish_failed) = match polished {
+        Ok(r) => (r.text, r.used_dictionary, r.used_snippets, r.dictionary_fixes, false),
         Err(e) => {
             log::warn!("polish failed, using the raw transcript: {e}");
             toast("error", &format!("Cleanup failed, the raw text was used. {e}"));
-            (raw.clone(), Vec::new(), Vec::new(), true)
+            (raw.clone(), Vec::new(), Vec::new(), 0, true)
         }
     };
 

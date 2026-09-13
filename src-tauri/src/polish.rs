@@ -23,6 +23,7 @@ pub struct PolishContext<'a> {
 #[derive(Debug, Default, Clone)]
 pub struct PolishResult {
     pub text: String,
+    pub dictionary_fixes: i64,
     pub used_dictionary: Vec<String>,
     pub used_snippets: Vec<String>,
 }
@@ -161,7 +162,7 @@ fn app_note(ctx: &PolishContext) -> String {
     let haystack = format!("{} {}", ctx.app.process_name, ctx.app.title).to_lowercase();
     for rule in &ctx.settings.style.app_rules {
         let needle = rule.app_match.trim().to_lowercase();
-        if !needle.is_empty() && haystack.contains(&needle) && !rule.note.trim().is_empty() {
+        if !needle.is_empty() && haystack.contains(&needle) {
             return rule.note.trim().to_string();
         }
     }
@@ -178,13 +179,18 @@ pub fn build_system_prompt(ctx: &PolishContext) -> String {
     p.push_str("- Keep the language of the speaker. German stays German, English stays English.\n");
     p.push_str("- Fix punctuation, capitalization and obvious transcription errors.\n");
     if ctx.settings.style.keep_fillers {
-        p.push_str("- Keep filler words as spoken.\n");
+        p.push_str("- Keep filler words, repetitions and false starts as spoken.\n");
     } else {
         p.push_str("- Remove filler words and false starts (ah, oehm, you know, I mean).\n");
     }
     p.push_str("- Spoken punctuation words become symbols: Punkt, Komma, Fragezeichen, neue Zeile, neuer Absatz, period, comma, question mark, new line, new paragraph.\n");
     p.push_str("- No markdown formatting unless the speaker asked for a list or headings.\n");
     p.push_str(&format!("- Tone: {}.\n", tone_for(ctx)));
+    p.push_str(match tone_for(ctx).as_str() {
+        "formal" => "- Use complete sentences, polite address and no contractions. Preserve all facts.\n",
+        "casual" => "- Use relaxed, concise wording. Contractions are welcome; keep small talk and all facts.\n",
+        _ => "- Keep the speaker's wording. Only clean up grammar, punctuation and transcription errors.\n",
+    });
     let note = app_note(ctx);
     if !note.is_empty() {
         p.push_str(&format!("- Context note for this app: {note}\n"));
@@ -349,14 +355,14 @@ pub fn polish(ctx: PolishContext) -> Result<PolishResult, String> {
 
     // 1) Snippets, 2) dictionary.
     let (after_snippets, used_snippets) = apply_snippets(ctx.raw, ctx.snippets);
-    let (after_dict, mut used_dictionary, _) = apply_dictionary(&after_snippets, ctx.dictionary);
+    let (after_dict, mut used_dictionary, dictionary_fixes) = apply_dictionary(&after_snippets, ctx.dictionary);
 
     let polish_possible = ctx.settings.providers.polish_enabled
         && polish_target(ctx.settings).is_ok()
         && !after_dict.trim().is_empty();
 
     if !polish_possible {
-        return Ok(PolishResult { text: after_dict, used_dictionary, used_snippets });
+        return Ok(PolishResult { text: after_dict, dictionary_fixes, used_dictionary, used_snippets });
     }
 
     // 3) LLM polish.
@@ -364,14 +370,14 @@ pub fn polish(ctx: PolishContext) -> Result<PolishResult, String> {
     let polished = chat(ctx.settings, &system, &after_dict, 0.2)?;
 
     // 4) Dictionary again, in case the model reintroduced a misspelling.
-    let (final_text, used_again, _) = apply_dictionary(&polished, ctx.dictionary);
+    let (final_text, used_again, extra_fixes) = apply_dictionary(&polished, ctx.dictionary);
     for id in used_again {
         if !used_dictionary.contains(&id) {
             used_dictionary.push(id);
         }
     }
 
-    Ok(PolishResult { text: final_text, used_dictionary, used_snippets })
+    Ok(PolishResult { text: final_text, dictionary_fixes: dictionary_fixes + extra_fixes, used_dictionary, used_snippets })
 }
 
 /// Run a named transform prompt over a text.
@@ -537,5 +543,49 @@ mod tests {
         assert!(prompt.contains("short messages"));
         assert!(prompt.contains("Spechy"));
         assert!(prompt.contains("sign off"));
+    }
+
+    #[test]
+    fn first_matching_app_rule_owns_both_tone_and_note() {
+        let mut settings = offline_settings();
+        for (id, tone, note) in [("first", "formal", ""), ("second", "casual", "unwanted note")] {
+            settings.style.app_rules.push(crate::model::AppStyleRule {
+                id: id.into(), app_match: "slack".into(), tone: tone.into(), note: note.into(),
+            });
+        }
+        let app = ForegroundApp { process_name: "SLACK.exe".into(), title: String::new(), hwnd: 0 };
+        let prompt = build_system_prompt(&ctx_for("hello", &settings, &[], &[], &app));
+        assert!(prompt.contains("Tone: formal"));
+        assert!(!prompt.contains("unwanted note"));
+    }
+
+    #[test]
+    fn counts_dictionary_corrections_after_snippet_expansion() {
+        let settings = offline_settings();
+        let dictionary = vec![dict("Spechy", "speechy")];
+        let snippets = vec![snip("intro", "my app", "speechy and speechy")];
+        let app = ForegroundApp { process_name: String::new(), title: String::new(), hwnd: 0 };
+        let result = polish(ctx_for("my app", &settings, &dictionary, &snippets, &app)).unwrap();
+        assert_eq!(result.text, "Spechy and Spechy");
+        assert_eq!(result.dictionary_fixes, 2);
+    }
+
+    #[test]
+    #[ignore = "Uses the locally configured cleanup provider with synthetic text"]
+    fn configured_provider_applies_style_and_transform() {
+        let mut settings = crate::settings::load();
+        settings.providers.polish_enabled = true;
+        settings.style.app_rules.clear();
+        settings.style.default_tone = "formal".into();
+        settings.style.custom_rules = "Use the spelling 'Project Cedar' instead of 'project seeder'.".into();
+        let app = ForegroundApp { process_name: "notepad.exe".into(), title: "Draft".into(), hwnd: 0 };
+        let result = polish(ctx_for("I can't finish project seeder today but I'll send it tomorrow", &settings, &[], &[], &app)).unwrap();
+        assert!(result.text.contains("Project Cedar"), "Custom style rule missing: {}", result.text);
+        assert!(!result.text.to_lowercase().contains("can't"), "Formal tone not applied: {}", result.text);
+        assert!(!result.text.trim().is_empty());
+        println!("Formal style and custom rule: {}", result.text);
+        let transformed = apply_transform("Translate the text into German. Output only the translation.", "The red bicycle is outside.", &settings).unwrap();
+        assert!(transformed.to_lowercase().contains("fahrrad"), "Translation not applied: {transformed}");
+        println!("Transform: {transformed}");
     }
 }

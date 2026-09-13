@@ -2,10 +2,12 @@
 import { createContext, useContext } from "react";
 import type { Settings, Toast } from "./ipc";
 
+export type SettingsPatch = Omit<Partial<Settings>, "style"> & { style?: Partial<Settings["style"]> };
+
 export interface AppStore {
   settings: Settings;
   /** Persist a partial change; backend echoes the full settings back. */
-  update: (patch: Partial<Settings>) => Promise<void>;
+  update: (patch: SettingsPatch) => Promise<void>;
   toast: (t: Toast) => void;
   /** Navigate to a view id: "home" | "insights" | "dictionary" | "snippets" | "style" | "transforms" | "scratchpad" | "settings" | "help" */
   navigate: (view: string) => void;

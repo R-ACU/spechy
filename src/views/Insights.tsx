@@ -1,7 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { Bot, Code2, FileText, Infinity as InfinityIcon, Info, Mail, MessageCircle, Monitor, TrendingUp } from "lucide-react";
 import { api, events, type AppCategory, type Stats } from "../lib/ipc";
-import { safeCall } from "../lib/mock";
 import { useStore } from "../lib/store";
 import { Tabs } from "../components/ui";
 import { DeviceBar, Gauge, Heatmap, PercentBar, ShareStamp, TagCloud } from "../components/charts";
@@ -33,14 +32,19 @@ export default function Insights() {
   const { toast } = useStore();
   const [tab, setTab] = useState<"usage" | "voice">("usage");
   const [stats, setStats] = useState<Stats>(EMPTY_STATS);
-
-  const load = () => { void safeCall(() => api.getStats(), "stats", EMPTY_STATS).then(setStats); };
+  const [loadError, setLoadError] = useState("");
 
   useEffect(() => {
+    let dead = false;
+    const load = () => {
+      void api.getStats().then((value) => {
+        if (!dead) { setStats(value); setLoadError(""); }
+      }).catch((error) => { if (!dead) setLoadError(`Could not load insights: ${String(error)}`); });
+    };
     load();
     let off: (() => void) | undefined;
-    events.onHistoryAdded(() => load()).then((fn) => { off = fn; }).catch(() => {});
-    return () => { off?.(); };
+    events.onHistoryAdded(() => load()).then((fn) => { if (dead) fn(); else off = fn; }).catch(() => {});
+    return () => { dead = true; off?.(); };
   }, []);
 
   const byCategory = useMemo(() => {
@@ -54,7 +58,7 @@ export default function Insights() {
   }, [stats.perApp]);
 
   const monthDelta = useMemo(() => {
-    if (!stats.wordsPrevMonth) return stats.wordsThisMonth > 0 ? 100 : 0;
+    if (!stats.wordsPrevMonth) return null;
     return Math.round(((stats.wordsThisMonth - stats.wordsPrevMonth) / stats.wordsPrevMonth) * 100);
   }, [stats.wordsThisMonth, stats.wordsPrevMonth]);
 
@@ -74,6 +78,8 @@ export default function Insights() {
         <ShareStamp onClick={() => void onShare()} />
       </div>
 
+      {loadError && <p role="alert" className="muted">{loadError}</p>}
+
       <Tabs
         value={tab}
         onChange={setTab}
@@ -92,11 +98,11 @@ export default function Insights() {
           </section>
 
           <section className="card ins-card">
-            <div className="ins-big">{(stats.fixes + stats.dictionaryFixes).toLocaleString("en-US")}</div>
-            <div className="ins-cap">Fixes made by Spechy</div>
+            <div className="ins-big">{stats.fixes.toLocaleString("en-US")}</div>
+            <div className="ins-cap">Word edits by Spechy</div>
             <div className="ins-rule" />
             <div className="ins-fix-row">
-              <span>{stats.fixes.toLocaleString("en-US")} words corrected</span>
+              <span>Estimated from original and final text</span>
               <Info size={14} className="faint" />
             </div>
             <div className="ins-fix-row">
@@ -113,14 +119,14 @@ export default function Insights() {
               </div>
               <span className="ins-pill">
                 <TrendingUp size={13} />
-                {monthDelta >= 0 ? "+" : ""}{compactPercent(Math.abs(monthDelta))}% this month
+                {monthDelta === null ? "No previous month to compare" : `${monthDelta >= 0 ? "+" : "-"}${compactPercent(Math.abs(monthDelta))}% vs last month`}
               </span>
             </div>
             <div className="ins-rule" />
             <p className="ins-books">
               {books >= 1
                 ? `You've written ${Math.floor(books)} complete book${Math.floor(books) === 1 ? "" : "s"}!`
-                : "Almost a book"}
+                : `${Math.round(books * 100)}% of a book (90,000 words)`}
             </p>
             <DeviceBar label="Desktop" icon={<Monitor size={14} />} />
           </section>

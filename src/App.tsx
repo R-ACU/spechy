@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { isTauri } from "@tauri-apps/api/core";
 import { api, events, type DictationState, type Settings, type Toast } from "./lib/ipc";
-import { StoreContext, type AppStore } from "./lib/store";
+import { StoreContext, type AppStore, type SettingsPatch } from "./lib/store";
 import { defaultSettings, MOCK, safe } from "./lib/fallback";
 import Sidebar from "./components/Sidebar";
 import TitleBar from "./components/TitleBar";
@@ -78,6 +78,16 @@ function useEvent<T>(sub: (cb: (v: T) => void) => Promise<() => void>, cb: (v: T
 
 export default function App() {
   const [settings, setSettings] = useState<Settings>(defaultSettings);
+  const settingsRef = useRef(defaultSettings);
+  const storedSettings = useRef(defaultSettings);
+  const saveQueue = useRef(Promise.resolve());
+  const pendingSaves = useRef(0);
+  const receiveSettings = useCallback((value: Settings) => {
+    if (pendingSaves.current > 0) return;
+    storedSettings.current = value;
+    settingsRef.current = value;
+    setSettings(value);
+  }, []);
   const [view, setView] = useState("home");
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [settingsSection, setSettingsSection] = useState<string | undefined>(undefined);
@@ -88,7 +98,7 @@ export default function App() {
   const toastId = useRef(0);
 
   useEffect(() => {
-    void safe(() => api.getSettings(), defaultSettings).then(setSettings);
+    void safe(() => api.getSettings(), defaultSettings).then(receiveSettings);
     void safe(() => api.getState(), idleState).then(setState);
   }, []);
 
@@ -110,23 +120,33 @@ export default function App() {
     setView(next);
   }, []);
 
-  const update = useCallback(async (patch: Partial<Settings>) => {
-    const next = { ...settings, ...patch };
+  const update = useCallback((patch: SettingsPatch) => {
+    const previous = settingsRef.current;
+    const next = { ...previous, ...patch, style: { ...previous.style, ...patch.style } };
+    settingsRef.current = next;
     setSettings(next);
-    try {
-      const stored = await api.setSettings(next);
-      setSettings(stored);
-    } catch (error) {
-      if (isTauri()) {
-        setSettings(settings);
-        toast({ kind: "error", message: String(error) });
+    pendingSaves.current += 1;
+    const save = saveQueue.current.then(async () => {
+      try {
+        storedSettings.current = await api.setSettings(next);
+      } catch (error) {
+        if (isTauri()) toast({ kind: "error", message: String(error) });
+        else storedSettings.current = next;
+      } finally {
+        pendingSaves.current -= 1;
+        if (pendingSaves.current === 0) {
+          settingsRef.current = storedSettings.current;
+          setSettings(storedSettings.current);
+        }
       }
-    }
-  }, [settings, toast]);
+    });
+    saveQueue.current = save;
+    return save;
+  }, [toast]);
 
   useTheme(settings.theme);
 
-  useEvent<Settings>(events.onSettingsChanged, setSettings);
+  useEvent<Settings>(events.onSettingsChanged, receiveSettings);
   useEvent<Toast>(events.onToast, toast);
   useEvent<string>(events.onNavigate, navigate);
   useEvent<DictationState>(events.onState, setState);

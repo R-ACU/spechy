@@ -3,49 +3,17 @@ import { useMemo, useState } from "react";
 import { ChevronLeft, ChevronRight, Share2 } from "lucide-react";
 import type { DayStat } from "../lib/ipc";
 
-// ---------------------------------------------------------------- percentile
-
-/** Rough "top x%" of speakers for a given words-per-minute value. */
-export function topPercent(wpm: number): number {
-  const pts: [number, number][] = [
-    [0, 50],
-    [60, 50],
-    [100, 10],
-    [130, 1],
-    [160, 0.4],
-    [220, 0.1],
-  ];
-  if (wpm <= pts[1][0]) return 50;
-  for (let i = 1; i < pts.length - 1; i++) {
-    const [x0, y0] = pts[i];
-    const [x1, y1] = pts[i + 1];
-    if (wpm <= x1) {
-      const t = (wpm - x0) / (x1 - x0);
-      // interpolate on a log scale so the curve stays smooth between anchors
-      return Math.exp(Math.log(y0) + t * (Math.log(y1) - Math.log(y0)));
-    }
-  }
-  return 0.1;
-}
-
-export function topPercentLabel(wpm: number): string {
-  const p = topPercent(wpm);
-  if (p >= 10) return `${Math.round(p)}%`;
-  if (p >= 1) return `${p.toFixed(0)}%`;
-  return `${p.toFixed(1)}%`;
-}
-
 // -------------------------------------------------------------------- gauge
 
-/** Half circle gauge with the "Top x%" caption inside. */
+/** Dictation speed on a 0-200 WPM scale, without an invented population ranking. */
 export function Gauge({ wpm }: { wpm: number }) {
   const cx = 92;
   const cy = 88;
   const r = 62;
   const d = `M ${cx - r} ${cy} A ${r} ${r} 0 0 1 ${cx + r} ${cy}`;
-  const filled = Math.max(8, Math.min(97, (wpm / 190) * 100));
+  const filled = Math.max(0, Math.min(100, (wpm / 200) * 100));
   return (
-    <svg viewBox="0 0 184 98" className="ins-gauge" role="img" aria-label={`Top ${topPercentLabel(wpm)}`}>
+    <svg viewBox="0 0 184 98" className="ins-gauge" role="img" aria-label={`${wpm} words per minute on a 0 to 200 scale`}>
       <path d={d} fill="none" stroke="var(--teal-200)" strokeWidth={18} strokeLinecap="round" />
       <path
         d={d}
@@ -56,9 +24,10 @@ export function Gauge({ wpm }: { wpm: number }) {
         pathLength={100}
         strokeDasharray={`${filled} 100`}
         className="ins-gauge-arc"
+        visibility={wpm > 0 ? "visible" : "hidden"}
       />
-      <text x={cx} y={cy - 32} textAnchor="middle" className="ins-gauge-cap">Top</text>
-      <text x={cx} y={cy - 6} textAnchor="middle" className="ins-gauge-val">{topPercentLabel(wpm)}</text>
+      <text x={cx} y={cy - 32} textAnchor="middle" className="ins-gauge-cap">Recent pace</text>
+      <text x={cx} y={cy - 6} textAnchor="middle" className="ins-gauge-val">{wpm} wpm</text>
     </svg>
   );
 }
@@ -145,6 +114,8 @@ export function Heatmap({ perDay, streakDays }: { perDay: DayStat[]; streakDays:
     end.setDate(end.getDate() + (6 - end.getDay())); // Saturday of the current week
 
     const streakStart = new Date(today);
+    if (!perDay.some((day) => day.date === isoDate(today) && day.count > 0)) streakStart.setDate(streakStart.getDate() - 1);
+    const streakEnd = new Date(streakStart);
     streakStart.setDate(streakStart.getDate() - Math.max(0, streakDays - 1));
 
     const out: Cell[][] = [];
@@ -161,7 +132,7 @@ export function Heatmap({ perDay, streakDays }: { perDay: DayStat[]; streakDays:
           iso,
           words,
           level,
-          streak: streakDays > 0 && d >= streakStart && d <= today,
+          streak: streakDays > 0 && d >= streakStart && d <= streakEnd,
           future: d > today,
         });
       }

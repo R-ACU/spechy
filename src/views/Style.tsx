@@ -1,4 +1,3 @@
-import { useState } from "react";
 import { Plus, Trash2 } from "lucide-react";
 import type { AppStyleRule, Tone } from "../lib/ipc";
 import { useStore } from "../lib/store";
@@ -15,26 +14,28 @@ const TONE_OPTIONS = TONES.map((t) => ({ value: t.id, label: t.label }));
 export default function Style() {
   const { settings, update } = useStore();
   const style = settings.style;
-  const [rules, setRules] = useState<AppStyleRule[]>(style.appRules);
-  const [customRules, setCustomRules] = useState(style.customRules);
+  const rules = style.appRules;
+  const provider = settings.providers;
+  const cleanupReady = provider.polishProvider === "custom"
+    ? !!(provider.customPolishBaseUrl.trim() && provider.customPolishModel.trim())
+    : provider.polishProvider === "groq"
+      ? !!(provider.groqApiKey.trim() && provider.groqPolishModel.trim())
+      : !!(provider.openrouterApiKey.trim() && provider.polishModel.trim());
 
-  const saveStyle = (patch: Partial<typeof style>) => void update({ style: { ...style, ...patch } });
+  const saveStyle = (patch: Partial<typeof style>) => void update({ style: patch });
 
   const setRule = (id: string, patch: Partial<AppStyleRule>) => {
     const next = rules.map((r) => (r.id === id ? { ...r, ...patch } : r));
-    setRules(next);
     saveStyle({ appRules: next });
   };
 
   const addRule = () => {
     const next = [...rules, { id: `rule-${Date.now()}`, appMatch: "", tone: style.defaultTone, note: "" }];
-    setRules(next);
     saveStyle({ appRules: next });
   };
 
   const removeRule = (id: string) => {
     const next = rules.filter((r) => r.id !== id);
-    setRules(next);
     saveStyle({ appRules: next });
   };
 
@@ -43,6 +44,13 @@ export default function Style() {
       <div className="page-head">
         <h1 className="page-title">Style</h1>
       </div>
+
+      {!settings.providers.polishEnabled && (
+        <p className="muted sty-sub" role="status">Style rules are inactive while AI cleanup is off. Enable it in Settings to apply your tone and instructions.</p>
+      )}
+      {settings.providers.polishEnabled && !cleanupReady && (
+        <p className="muted sty-sub" role="status">Style rules need a configured cleanup provider. Add its model and connection details in Settings.</p>
+      )}
 
       <section className="sty-section rise">
         <h2 className="sty-h2">Default tone</h2>
@@ -69,7 +77,7 @@ export default function Style() {
         <div className="sty-head">
           <div>
             <h2 className="sty-h2">Rules per app</h2>
-            <p className="muted sty-sub">Matches the window title or process name, e.g. slack, outlook, code.</p>
+            <p className="muted sty-sub">Matches the window title or process name, e.g. slack, outlook, code. The first matching rule wins; empty matches are ignored.</p>
           </div>
           <Button variant="secondary" size="sm" onClick={addRule}><Plus size={15} /> Add rule</Button>
         </div>
@@ -111,9 +119,8 @@ export default function Style() {
           className="input sty-textarea"
           rows={5}
           placeholder={"Always write 'AI-OS' with a hyphen. Use 'du' not 'Sie'."}
-          value={customRules}
-          onChange={(e) => setCustomRules(e.target.value)}
-          onBlur={() => saveStyle({ customRules })}
+          value={style.customRules}
+          onChange={(e) => saveStyle({ customRules: e.target.value })}
         />
       </section>
 
