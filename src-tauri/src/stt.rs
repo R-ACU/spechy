@@ -118,13 +118,19 @@ pub fn transcribe(providers: &Providers, req: SttRequest) -> Result<String, Stri
             }
             other => other,
         },
-        "custom" => transcribe_openai_compatible(
-            &providers.custom_stt_base_url,
-            &providers.custom_stt_api_key,
-            &providers.custom_stt_model,
-            &req,
-            "Your server",
-        ),
+        "custom" => {
+            if providers.custom_stt_api == "whisper_cpp" {
+                transcribe_whisper_cpp(&providers.custom_stt_base_url, &req)
+            } else {
+                transcribe_openai_compatible(
+                    &providers.custom_stt_base_url,
+                    &providers.custom_stt_api_key,
+                    &providers.custom_stt_model,
+                    &req,
+                    "Your server",
+                )
+            }
+        }
         _ => transcribe_openrouter(providers, &req),
     }
 }
@@ -186,6 +192,35 @@ fn transcribe_openai_compatible(
     }
 
     let json: serde_json::Value = match request.send_bytes(&body) {
+        Ok(r) => r.into_json().map_err(|e| format!("{label} sent an unreadable answer: {e}"))?,
+        Err(e) => return Err(map_error(label, e)),
+    };
+    Ok(json.get("text").and_then(|v| v.as_str()).unwrap_or_default().trim().to_string())
+}
+
+// ---------- whisper.cpp server ----------
+
+/// whisper.cpp is not OpenAI compatible: it serves `POST /inference` and answers
+/// with `{"text": ...}`. The model is the one the server was started with, so no
+/// model field is sent.
+fn transcribe_whisper_cpp(base_url: &str, req: &SttRequest) -> Result<String, String> {
+    let label = "Your server";
+    let boundary = format!("----spechy{}", crate::model::now_ms());
+    let prompt = vocabulary_prompt(req.vocabulary);
+    let mut fields: Vec<(&str, &str)> = vec![("response_format", "json"), ("temperature", "0")];
+    if req.languages.len() == 1 {
+        fields.push(("language", req.languages[0].as_str()));
+    }
+    if !prompt.is_empty() {
+        fields.push(("prompt", prompt.as_str()));
+    }
+    let body = multipart_body(&boundary, &fields, req.wav);
+
+    let json: serde_json::Value = match agent()
+        .post(&join_url(base_url, "inference"))
+        .set("Content-Type", &format!("multipart/form-data; boundary={boundary}"))
+        .send_bytes(&body)
+    {
         Ok(r) => r.into_json().map_err(|e| format!("{label} sent an unreadable answer: {e}"))?,
         Err(e) => return Err(map_error(label, e)),
     };
@@ -299,6 +334,21 @@ fn fetch_models_json(base_url: &str, key: &str, label: &str, openrouter: bool) -
 
 /// Lightweight check against the models endpoint of a provider.
 pub fn test_key(provider: &str, key: &str) -> Result<String, String> {
+    // whisper.cpp lists no models; its health endpoint is the honest check.
+    if provider == "custom_stt" {
+        let p = crate::settings::current().providers;
+        if p.custom_stt_api == "whisper_cpp" {
+            if p.custom_stt_base_url.trim().is_empty() {
+                return Err("Enter the server address first".into());
+            }
+            return match agent().get(&join_url(&p.custom_stt_base_url, "health")).call() {
+                Ok(response) if response.status() == 200 => Ok("OK (whisper.cpp server)".into()),
+                Ok(response) => Err(format!("Your server answered with {}.", response.status())),
+                Err(e) => Err(map_error("Your server", e)),
+            };
+        }
+    }
+
     let (base, key, label, openrouter) = match provider {
         "groq" => (GROQ_BASE.to_string(), key.trim().to_string(), "Groq", false),
         "openrouter" => (OPENROUTER_BASE.to_string(), key.trim().to_string(), "OpenRouter", true),
@@ -400,6 +450,10 @@ fn parse_models(json: &serde_json::Value, kind: &str) -> Vec<ModelInfo> {
 /// Every model a provider offers. `provider` is "groq", "openrouter", "custom_stt"
 /// or "custom_polish"; the custom ones read their base url from the settings.
 pub fn list_models(provider: &str, refresh: bool) -> Result<Vec<ModelInfo>, String> {
+    // whisper.cpp cannot list its models, so offer the downloaded ones instead.
+    if provider == "custom_stt" && crate::settings::current().providers.custom_stt_api == "whisper_cpp" {
+        return Ok(crate::local_models::installed_models());
+    }
     if !refresh {
         if let Some(hit) = cached_models(provider) {
             return Ok(hit);

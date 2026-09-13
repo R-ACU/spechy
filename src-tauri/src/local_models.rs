@@ -12,7 +12,7 @@ use std::time::Duration;
 
 use sha2::{Digest, Sha256};
 
-use crate::model::{Fit, HardwareProfile, LocalModel, LocalModelFit};
+use crate::model::{Fit, HardwareProfile, LocalModel, LocalModelFit, ModelInfo};
 
 /// Pinned revision of `ggerganov/whisper.cpp`, so a file and its checksum stay
 /// stable. Bump this together with `size_bytes` and `sha256` when adding models.
@@ -222,8 +222,7 @@ fn gb(mb: u64) -> String {
 fn fit_entry(model: &LocalModel, hw: &HardwareProfile, prefers_german: bool) -> LocalModelFit {
     let fit = fit_for(model, hw);
     let path = models_dir().join(&model.file);
-    let installed = path.metadata().map(|meta| meta.is_file() && meta.len() == model.size_bytes).unwrap_or(false)
-        && looks_like_ggml(&path);
+    let installed = looks_installed(model);
     LocalModelFit {
         model: model.clone(),
         fit,
@@ -316,17 +315,54 @@ pub fn download(id: &str, progress: impl Fn(Progress)) -> Result<LocalModelFit, 
     Ok(fit_entry(&model, &hardware(), prefers_german()))
 }
 
+/// The catalogue entries whose file is already in the models folder, as the model
+/// picker wants them. whisper.cpp has no model list endpoint, so this is what the
+/// custom picker shows for the whisper.cpp API.
+pub fn installed_models() -> Vec<ModelInfo> {
+    catalogue()
+        .into_iter()
+        .filter(looks_installed)
+        .map(|model| ModelInfo { id: model.id, name: model.name, audio: true, free: true })
+        .collect()
+}
+
+/// Cheap check for listings: the right size and a ggml header. The full SHA-256
+/// is only computed when a download finishes, or before a reuse.
+fn looks_installed(model: &LocalModel) -> bool {
+    let path = models_dir().join(&model.file);
+    path.metadata().map(|meta| meta.is_file() && meta.len() == model.size_bytes).unwrap_or(false)
+        && looks_like_ggml(&path)
+}
+
 fn fetch(model: &LocalModel, part: &Path, progress: &impl Fn(Progress)) -> Result<(), String> {
+    download_file(&model.url, part, model.size_bytes, &model.sha256, &model.name, progress)?;
+    if !looks_like_ggml(part) {
+        let _ = std::fs::remove_file(part);
+        return Err(format!("{} is not a whisper.cpp model file.", model.name));
+    }
+    Ok(())
+}
+
+/// Stream a download to `part` and only leave it there when its size and SHA-256
+/// match. Shared by the model library and the local server download.
+pub fn download_file(
+    url: &str,
+    part: &Path,
+    size_bytes: u64,
+    sha256: &str,
+    label: &str,
+    progress: &impl Fn(Progress),
+) -> Result<(), String> {
     let agent = ureq::AgentBuilder::new()
         .timeout_connect(Duration::from_secs(20))
         // Per read, not for the whole transfer: model files are hundreds of megabytes.
         .timeout_read(Duration::from_secs(120))
         .build();
     let response = agent
-        .get(&model.url)
+        .get(url)
         .set("User-Agent", "Spechy")
         .call()
-        .map_err(|error| crate::stt::map_error("The model host", error))?;
+        .map_err(|error| crate::stt::map_error("The download host", error))?;
 
     // Only used for the progress bar; the real size check happens below.
     let total = response.header("Content-Length").and_then(parse_size);
@@ -344,9 +380,9 @@ fn fetch(model: &LocalModel, part: &Path, progress: &impl Fn(Progress)) -> Resul
         }
         hasher.update(&buffer[..count]);
         downloaded += count as u64;
-        if downloaded > model.size_bytes {
+        if downloaded > size_bytes {
             let _ = std::fs::remove_file(part);
-            return Err(format!("{} is larger than expected. Please report this.", model.name));
+            return Err(format!("{label} is larger than expected. Please report this."));
         }
         file.write_all(&buffer[..count]).map_err(|e| format!("Could not write {}: {e}", part.display()))?;
         progress(Progress { downloaded, total });
@@ -354,20 +390,13 @@ fn fetch(model: &LocalModel, part: &Path, progress: &impl Fn(Progress)) -> Resul
     file.sync_all().map_err(|e| e.to_string())?;
     drop(file);
 
-    if downloaded != model.size_bytes {
+    if downloaded != size_bytes {
         let _ = std::fs::remove_file(part);
-        return Err(format!(
-            "{} stopped early ({downloaded} of {} bytes). Please try again.",
-            model.name, model.size_bytes
-        ));
+        return Err(format!("{label} stopped early ({downloaded} of {size_bytes} bytes). Please try again."));
     }
-    if format!("{:x}", hasher.finalize()) != model.sha256 {
+    if format!("{:x}", hasher.finalize()) != sha256 {
         let _ = std::fs::remove_file(part);
-        return Err(format!("{} did not pass its checksum check. Please download it again.", model.name));
-    }
-    if !looks_like_ggml(part) {
-        let _ = std::fs::remove_file(part);
-        return Err(format!("{} is not a whisper.cpp model file.", model.name));
+        return Err(format!("{label} did not pass its checksum check. Please download it again."));
     }
     Ok(())
 }
