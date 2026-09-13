@@ -125,6 +125,10 @@ pub struct Providers {
     /// Own or local OpenAI-compatible transcription server, base url up to /v1
     /// (for example http://localhost:8000/v1). Used with /audio/transcriptions.
     pub custom_stt_base_url: String,
+    /// Which API the custom transcription server speaks: "openai" (any
+    /// OpenAI-compatible server) or "whisper_cpp" (the server that ships with
+    /// whisper.cpp, which is not OpenAI compatible).
+    pub custom_stt_api: String,
     pub custom_stt_api_key: String,
     pub custom_stt_model: String,
     /// Own or local OpenAI-compatible chat server, base url up to /v1
@@ -146,6 +150,7 @@ impl Default for Providers {
             polish_provider: "openrouter".into(),
             groq_polish_model: "llama-3.3-70b-versatile".into(),
             custom_stt_base_url: String::new(),
+            custom_stt_api: "openai".into(),
             custom_stt_api_key: String::new(),
             custom_stt_model: String::new(),
             custom_polish_base_url: String::new(),
@@ -267,6 +272,28 @@ pub struct LocalModelFit {
     pub installed_path: Option<String>,
     /// One line explaining the fit, for example "Runs on your RTX 4070".
     pub reason: String,
+}
+
+/// State of the whisper.cpp server Spechy can unpack and run on its own.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct LocalServerStatus {
+    /// A `whisper-server.exe` is unpacked and ready to start.
+    pub installed: bool,
+    /// Flavors that are installed: "cpu", "cuda".
+    pub installed_flavors: Vec<String>,
+    /// Flavor that matches this PC, used as the default download.
+    pub preferred_flavor: String,
+    pub running: bool,
+    /// Flavor of the running server, when there is one.
+    pub flavor: Option<String>,
+    pub port: u16,
+    pub model_id: Option<String>,
+    pub model_path: Option<String>,
+    /// Pinned whisper.cpp build the download comes from.
+    pub build: String,
+    /// Last lines of the server log, so the UI can show why it failed.
+    pub log_tail: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]

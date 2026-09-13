@@ -35,6 +35,8 @@ export interface Providers {
   groqPolishModel: string;
   /** Own or local OpenAI-compatible server, base url up to /v1. */
   customSttBaseUrl: string;
+  /** "openai" for any OpenAI-compatible server, "whisper_cpp" for whisper.cpp's own /inference API. */
+  customSttApi: "openai" | "whisper_cpp";
   customSttApiKey: string;
   customSttModel: string;
   customPolishBaseUrl: string;
@@ -94,6 +96,20 @@ export interface LocalModelFit {
   installed: boolean;
   installedPath: string | null;
   reason: string;
+}
+
+/** State of the whisper.cpp server Spechy can unpack and run itself. */
+export interface LocalServerStatus {
+  installed: boolean;
+  installedFlavors: string[];
+  preferredFlavor: string;
+  running: boolean;
+  flavor: string | null;
+  port: number;
+  modelId: string | null;
+  modelPath: string | null;
+  build: string;
+  logTail: string[];
 }
 
 export type Tone = "neutral" | "formal" | "casual";
@@ -159,6 +175,15 @@ export const api = {
   },
   removeLocalModel: (id: string) => invoke<LocalModelFit[]>("remove_local_model", { id }),
   openModelsDir: () => invoke<void>("open_models_dir"),
+  // managed local whisper.cpp server
+  localServerStatus: () => invoke<LocalServerStatus>("local_server_status"),
+  installLocalServer: (flavor: string, onProgress: (progress: { downloaded: number; total: number | null }) => void) => {
+    const channel = new Channel<{ downloaded: number; total: number | null }>();
+    channel.onmessage = onProgress;
+    return invoke<LocalServerStatus>("install_local_server", { flavor, onProgress: channel });
+  },
+  startLocalServer: (modelId: string, port: number) => invoke<LocalServerStatus>("start_local_server", { modelId, port }),
+  stopLocalServer: () => invoke<LocalServerStatus>("stop_local_server"),
   getAppVersion: () => invoke<string>("get_app_version"),
   // dictation control (UI buttons; hotkeys work without these)
   getState: () => invoke<DictationState>("get_state"),

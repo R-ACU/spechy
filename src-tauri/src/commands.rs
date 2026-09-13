@@ -5,7 +5,7 @@ use tauri::{Emitter, Manager};
 
 use crate::model::{
     new_id, now_ms, DictationMode, DictationState, DictionaryEntry, HardwareProfile, HistoryEntry, HistoryPage,
-    LocalModelFit, MicDevice, ModelInfo, Settings, Snippet, Stats, Transform, EV_SETTINGS_CHANGED,
+    LocalModelFit, LocalServerStatus, MicDevice, ModelInfo, Settings, Snippet, Stats, Transform, EV_SETTINGS_CHANGED,
 };
 
 // ---------- Settings ----------
@@ -110,6 +110,42 @@ pub fn open_models_dir() -> Result<(), String> {
         .spawn()
         .map_err(|e| format!("Could not open the folder: {e}"))?;
     Ok(())
+}
+
+// ---------- Managed whisper.cpp server ----------
+
+/// Whether the local server is unpacked and running, plus its log tail.
+#[tauri::command]
+pub fn local_server_status() -> LocalServerStatus {
+    crate::local_server::status()
+}
+
+/// Download and unpack one whisper.cpp build ("cpu" or "cuda").
+#[tauri::command]
+pub async fn install_local_server(
+    flavor: String,
+    on_progress: tauri::ipc::Channel<crate::local_models::Progress>,
+) -> Result<LocalServerStatus, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        crate::local_server::install(&flavor, |value| {
+            let _ = on_progress.send(value);
+        })
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
+/// Start the local server for a downloaded model. Waits until it answers.
+#[tauri::command]
+pub async fn start_local_server(model_id: String, port: u16) -> Result<LocalServerStatus, String> {
+    tauri::async_runtime::spawn_blocking(move || crate::local_server::start(&model_id, port))
+        .await
+        .map_err(|e| e.to_string())?
+}
+
+#[tauri::command]
+pub fn stop_local_server() -> LocalServerStatus {
+    crate::local_server::stop()
 }
 
 #[tauri::command]

@@ -74,22 +74,30 @@ Change them in **Settings > General > Shortcuts**. Paste last dictation uses the
 
 | Step | Hosted providers | Custom endpoint |
 | :--- | :--- | :--- |
-| Transcription | Groq Whisper or audio-capable OpenRouter models | OpenAI-compatible `/audio/transcriptions` |
+| Transcription | Groq Whisper or audio-capable OpenRouter models | OpenAI-compatible `/audio/transcriptions`, or whisper.cpp's `/inference` |
 | Text cleanup | Groq or OpenRouter chat models | OpenAI-compatible `/chat/completions` |
 
 Use **Settings > Providers** to pick your models. A custom server can run on your own machine or infrastructure. For fully local processing, configure local servers for **both** transcription and cleanup. Leave the key empty if your server does not require authentication.
 
 ### Local model library
 
-**Settings > Providers > Custom server > Local model library** lists curated Whisper models for [whisper.cpp](https://github.com/ggerganov/whisper.cpp) and scores every one against your PC: total RAM, free RAM, CPU cores and dedicated VRAM, read from Windows itself. Each card says whether the model **runs great**, **runs well**, **just fits** or is **too large**, rates accuracy, speed and German quality, and can download the GGML file into `%APPDATA%\com.remo.spechy\models`. Downloads come from a pinned whisper.cpp revision and are verified against the published SHA-256 before the file is kept.
+**Settings > Providers > Custom server > whisper.cpp > Local model library** does the whole local setup for you:
 
-Spechy does not run a speech server by itself. A card copies the matching command, for example:
+1. It lists curated Whisper models and scores every one against your PC: total RAM, free RAM, CPU cores and dedicated VRAM, read from Windows itself. Each card says whether the model **runs great**, **runs well**, **just fits** or is **too large**, and rates accuracy, speed and German quality.
+2. It downloads the GGML file into `%APPDATA%\com.remo.spechy\models`, from a pinned whisper.cpp revision and verified against the published SHA-256.
+3. It downloads the matching [whisper.cpp](https://github.com/ggerganov/whisper.cpp) server build into `%APPDATA%\com.remo.spechy\server`, unpacked with the `tar.exe` that ships with Windows. The **CUDA** build is offered on NVIDIA cards (roughly twenty times faster, 644 MB) and the **CPU** build everywhere else (9 MB).
+4. **Use this model** starts the server for that model, points the custom provider at `http://127.0.0.1:8178` and selects the whisper.cpp API. Spechy stops the server again when it quits.
 
-```powershell
-whisper-server -m "%APPDATA%\com.remo.spechy\models\ggml-large-v3-turbo.bin" --host 127.0.0.1 --port 8080
-```
+The port is configurable; `8080` is often taken by other software, so the default is `8178`.
 
-Then set the custom server address to `http://127.0.0.1:8080/v1`, press **Test** and dictate. **Use this model** fills in the model and address for you. When you dictate German, the library weights German accuracy first, so Large v3 Turbo or Large v3 are recommended over the small English-focused builds.
+whisper.cpp is **not** OpenAI compatible: it serves `POST /inference` and answers with `{"text": ...}`. Spechy therefore has two custom transcription APIs:
+
+| API | Endpoint | Use it for |
+| :--- | :--- | :--- |
+| **whisper.cpp** | `POST /inference` | The server Spechy downloads and starts for you |
+| **OpenAI-compatible** | `POST /audio/transcriptions` | LM Studio, Speaches, LocalAI, your own server |
+
+When you dictate German, the library weights German accuracy first, so Large v3 Turbo or Large v3 are recommended over the small English-focused builds. Large v3 needs about four seconds per ten seconds of speech on a modern CPU and about a tenth of that on a mid-range NVIDIA GPU.
 
 ### What stays local
 
@@ -137,6 +145,7 @@ src-tauri/src/           Rust desktop application
   pipeline.rs            Dictation state machine
   stt.rs / polish.rs     Transcription and text cleanup
   local_models.rs        Curated local model catalogue, fit scoring and downloads
+  local_server.rs        Downloads, starts and stops the local whisper.cpp server
   hardware.rs            RAM, CPU and GPU detection for the model library
   paste.rs / pill.rs     Text insertion and native recording UI
   db.rs / settings.rs    Local persistence

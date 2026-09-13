@@ -7,6 +7,7 @@ pub mod db;
 pub mod hardware;
 pub mod hotkey;
 pub mod local_models;
+pub mod local_server;
 pub mod model;
 pub mod paste;
 pub mod pill;
@@ -49,6 +50,10 @@ pub fn run() {
             commands::download_local_model,
             commands::remove_local_model,
             commands::open_models_dir,
+            commands::local_server_status,
+            commands::install_local_server,
+            commands::start_local_server,
+            commands::stop_local_server,
             commands::get_app_version,
             commands::check_for_updates,
             commands::download_update,
@@ -114,10 +119,15 @@ pub fn run() {
         .build(tauri::generate_context!())
         .expect("Spechy could not start")
         .run(|_app, event| {
-            // Closing the last webview must leave dictation and the tray running.
-            // Explicit exits (Quit and the updater) carry a code and remain allowed.
-            if let tauri::RunEvent::ExitRequested { code: None, api, .. } = event {
-                api.prevent_exit();
+            match event {
+                // Closing the last webview must leave dictation and the tray running.
+                // Explicit exits (Quit and the updater) carry a code and remain allowed.
+                tauri::RunEvent::ExitRequested { code: None, api, .. } => api.prevent_exit(),
+                // Never leave the local whisper.cpp server running behind the app.
+                tauri::RunEvent::Exit => {
+                    crate::local_server::stop();
+                }
+                _ => {}
             }
         });
 }

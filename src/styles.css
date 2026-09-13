@@ -635,7 +635,7 @@ textarea.input { height: auto; padding: 10px 12px; resize: vertical; line-height
 /* ============================================================ Local model library */
 .pv-local { display: flex; align-items: center; justify-content: space-between; gap: 16px; }
 .pv-local-text { min-width: 0; }
-.pv-local-title { font-size: 14px; font-weight: 600; }
+.pv-local-title { display: flex; align-items: center; gap: 8px; font-size: 14px; font-weight: 600; }
 .pv-local-sub { font-size: 12.5px; line-height: 1.45; }
 .pv-hint { display: flex; align-items: center; justify-content: space-between; gap: 14px; padding: 12px 14px; margin: 14px 0 0; border-radius: var(--radius); background: var(--surface-2); font-size: 12.5px; color: var(--text-2); }
 
@@ -706,3 +706,18 @@ textarea.input { height: auto; padding: 10px 12px; resize: vertical; line-height
 .mlib-msg { padding: 22px 4px; font-size: 13px; }
 .mlib-foot { display: flex; align-items: center; justify-content: space-between; gap: 8px; flex-wrap: wrap; font-size: 12.5px; }
 .mlib-foot span { flex: 1; min-width: 240px; }
+
+/* Managed whisper.cpp server (ModelLibrary) */
+.mlib-server { display: flex; flex-direction: column; gap: 10px; padding: 14px 16px; border: 1px solid var(--border); border-radius: var(--radius); background: var(--surface-2); }
+.mlib-server-top { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+.mlib-server-icon { display: flex; align-items: center; justify-content: center; width: 30px; height: 30px; border-radius: 9px; background: var(--surface-3); color: var(--text-2); flex: none; }
+.mlib-server-text { flex: 1; min-width: 200px; display: block; }
+.mlib-server-title { display: flex; align-items: center; gap: 8px; font-size: 14px; font-weight: 600; }
+.mlib-server-sub { display: block; font-size: 12.5px; color: var(--text-2); margin-top: 2px; }
+.mlib-server-actions { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+.mlib-port { display: inline-flex; align-items: center; gap: 6px; font-size: 12.5px; color: var(--text-2); }
+.mlib-port .input { width: 84px; height: 32px; font-size: 13px; padding: 0 8px; }
+.mlib-log { font-size: 12px; }
+.mlib-log summary { cursor: pointer; color: var(--text-3); }
+.mlib-log pre { margin: 8px 0 0; padding: 10px 12px; max-height: 160px; overflow: auto; border-radius: var(--radius-sm); background: var(--field-bg); border: 1px solid var(--border); color: var(--text-2); font-size: 11.5px; line-height: 1.5; white-space: pre-wrap; user-select: text; }
+.mlib-foot svg { vertical-align: -2px; margin-right: 4px; }
