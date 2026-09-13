@@ -13,6 +13,7 @@ TODO.md
 *.db
 *.db-*
 *.wav
+!src-tauri/sounds/*.wav
 Inspiration/
 docs/
 _dev/

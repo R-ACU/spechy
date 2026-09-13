@@ -1,6 +1,6 @@
 //! Feedback sounds.
 //!
-//! Feedback uses locally synthesized tones with no third-party audio assets.
+//! Feedback uses the supplied Wispr Flow default-theme WAVs.
 //!
 //! A Start and a Stop sound can land within a few hundred milliseconds of each
 //! other. Opening a second waveOut device while the first one is still playing
@@ -41,7 +41,40 @@ impl Pcm {
 }
 
 fn pcm_for(kind: SoundKind) -> Pcm {
-    synthesize(kind)
+    let bytes: &[u8] = match kind {
+        SoundKind::Start => include_bytes!("../sounds/start.wav"),
+        SoundKind::Stop => include_bytes!("../sounds/stop.wav"),
+        SoundKind::Error => include_bytes!("../sounds/error.wav"),
+    };
+    decode_wav(bytes).unwrap_or_else(|| synthesize(kind))
+}
+
+fn decode_wav(bytes: &[u8]) -> Option<Pcm> {
+    let mut reader = hound::WavReader::new(std::io::Cursor::new(bytes)).ok()?;
+    let spec = reader.spec();
+    if spec.bits_per_sample != 16 || spec.sample_format != hound::SampleFormat::Int { return None; }
+    let samples = reader.samples::<i16>().collect::<Result<Vec<_>, _>>().ok()?;
+    Some(Pcm {
+        channels: spec.channels,
+        sample_rate: spec.sample_rate,
+        bits: spec.bits_per_sample,
+        data: samples.iter().flat_map(|sample| sample.to_le_bytes()).collect(),
+    })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn supplied_sounds_decode_at_their_original_format() {
+        for (kind, rate, frames) in [(SoundKind::Start, 44100, 7952), (SoundKind::Stop, 44100, 9663), (SoundKind::Error, 48000, 22463)] {
+            let pcm = pcm_for(kind);
+            assert_eq!(pcm.channels, 2);
+            assert_eq!(pcm.sample_rate, rate);
+            assert_eq!(pcm.data.len(), frames * 4);
+        }
+    }
 }
 
 fn synthesize(kind: SoundKind) -> Pcm {
