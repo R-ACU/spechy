@@ -5,6 +5,11 @@ description = "Voice dictation for Windows: hold a key, speak, text lands where 
 authors = ["Remo"]
 edition = "2021"
 default-run = "spechy"
+autobins = false
+
+[[bin]]
+name = "spechy"
+path = "src/main.rs"
 
 [lib]
 name = "spechy_lib"
