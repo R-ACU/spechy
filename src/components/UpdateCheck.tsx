@@ -54,9 +54,13 @@ export default function UpdateCheck() {
     setDownloading(true);
     setError("");
     setProgress(null);
-    try { setReady(await api.downloadUpdate(setProgress)); }
+    try {
+      setReady(await api.downloadUpdate(setProgress));
+      setInstalling(true);
+      await api.installUpdate();
+    }
     catch (reason) { setError(String(reason)); }
-    finally { setDownloading(false); }
+    finally { setDownloading(false); setInstalling(false); }
   };
 
   const install = async () => {
@@ -71,13 +75,13 @@ export default function UpdateCheck() {
 
   return <section className="help-card">
     <h2 className="help-title">Updates</h2>
-    <p className="muted" role="status">{error || downloadError || (installing ? "Starting the installer..." : downloading ? `Downloading update${percent === undefined ? "..." : `: ${percent}%`}` : ready ? `Spechy ${ready} is ready to install.` : checking ? "Checking for updates..." : result?.available ? `Spechy ${result.version} is available.` : result ? "You are up to date." : "Check for a new version of Spechy.")}</p>
+    <p className="muted" role="status">{error || downloadError || (installing ? "Installing update. Spechy will restart..." : downloading ? `Downloading update${percent === undefined ? "..." : `: ${percent}%`}` : ready ? `Spechy ${ready} is ready to install.` : checking ? "Checking for updates..." : result?.available ? `Spechy ${result.version} is available.` : result ? "You are up to date." : "Check for a new version of Spechy.")}</p>
     {downloading && <progress className="update-progress" aria-label="Update download" max={100} value={percent} />}
-    <p className="muted">Download updates here, then choose Install update. Spechy closes and the installer opens. Your settings and history are kept.</p>
+    <p className="muted">Update now downloads and installs the new version in the background. Spechy briefly closes and restarts. Your settings and history are kept.</p>
     <div className="help-actions">
       <Button variant="secondary" disabled={busy || !isTauri()} onClick={() => void check()}><RefreshCw size={16} />Check for updates</Button>
-      {ready ? <Button disabled={busy} onClick={() => void install()}>Install update</Button>
-        : result?.available && <Button disabled={busy} onClick={() => void download()}><Download size={16} />{downloading ? "Downloading..." : "Download update"}</Button>}
+      {ready ? <Button disabled={busy} onClick={() => void install()}>Update now</Button>
+        : result?.available && <Button disabled={busy} onClick={() => void download()}><Download size={16} />{downloading ? "Downloading..." : "Update now"}</Button>}
     </div>
   </section>;
 }

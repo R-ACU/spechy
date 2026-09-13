@@ -122,7 +122,9 @@ pub fn install() -> Result<(), String> {
     let ready = READY.lock().map_err(|e| e.to_string())?;
     let (path, expected) = ready.as_ref().ok_or("Download the update first.")?;
     verify(path, expected)?;
-    std::process::Command::new(path).spawn().map_err(|e| format!("Could not start the installer: {e}"))?;
+    // Tauri's NSIS installer supports silent update mode and relaunch on success.
+    std::process::Command::new(path).args(["/S", "/UPDATE", "/R"]).spawn()
+        .map_err(|e| format!("Could not start the installer: {e}"))?;
     Ok(())
 }
 
