@@ -1,6 +1,6 @@
 [package]
 name = "spechy"
-version = "0.1.1"
+version = "0.1.2"
 description = "Voice dictation for Windows: hold a key, speak, text lands where you type."
 authors = ["Remo"]
 edition = "2021"
@@ -23,6 +23,7 @@ tauri = { version = "2", features = ["tray-icon", "image-png"] }
 tauri-plugin-single-instance = "2"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
+sha2 = "0.10"
 ureq = { version = "2", features = ["json"] }
 rusqlite = { version = "0.32", features = ["bundled"] }
 cpal = "0.15"

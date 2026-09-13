@@ -80,6 +80,29 @@ pub async fn check_for_updates(app: tauri::AppHandle) -> Result<crate::updates::
 // ---------- Dictation ----------
 
 #[tauri::command]
+pub fn update_download_status() -> Result<crate::updates::DownloadStatus, String> {
+    crate::updates::status()
+}
+
+#[tauri::command]
+pub async fn download_update(app: tauri::AppHandle, on_progress: tauri::ipc::Channel<crate::updates::Progress>) -> Result<String, String> {
+    let version = app.package_info().version.to_string();
+    let cache = app.path().app_cache_dir().map_err(|e| e.to_string())?;
+    tauri::async_runtime::spawn_blocking(move || crate::updates::download(&version, &cache, |value| { let _ = on_progress.send(value); }))
+        .await.map_err(|e| e.to_string())?
+}
+
+#[tauri::command]
+pub async fn install_update(app: tauri::AppHandle) -> Result<(), String> {
+    if crate::pipeline::state().phase != crate::model::Phase::Idle {
+        return Err("Finish your current dictation before installing the update.".into());
+    }
+    tauri::async_runtime::spawn_blocking(crate::updates::install).await.map_err(|e| e.to_string())??;
+    app.exit(0);
+    Ok(())
+}
+
+#[tauri::command]
 pub fn get_state() -> DictationState {
     crate::pipeline::state()
 }

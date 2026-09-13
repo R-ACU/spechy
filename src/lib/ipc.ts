@@ -1,5 +1,5 @@
 // Typed bridge to the Rust backend. Mirrors src-tauri/src/model.rs exactly (camelCase).
-import { invoke } from "@tauri-apps/api/core";
+import { invoke, Channel } from "@tauri-apps/api/core";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 
 export type Phase = "idle" | "recording" | "transcribing" | "polishing" | "error";
@@ -138,6 +138,13 @@ export const api = {
   openUrl: (url: string) => invoke<void>("open_url", { url }),
   // window
   checkForUpdates: () => invoke<{ version: string; available: boolean; downloadUrl: string }>("check_for_updates"),
+  downloadUpdate: (onProgress: (progress: { downloaded: number; total: number | null }) => void) => {
+    const channel = new Channel<{ downloaded: number; total: number | null }>();
+    channel.onmessage = onProgress;
+    return invoke<string>("download_update", { onProgress: channel });
+  },
+  installUpdate: () => invoke<void>("install_update"),
+  updateDownloadStatus: () => invoke<{ downloading: boolean; version: string | null; progress: { downloaded: number; total: number | null } | null; error: string | null }>("update_download_status"),
   suspendHotkeys: (suspended: boolean) => invoke<void>("suspend_hotkeys", { suspended }),
   minimizeWindow: () => invoke<void>("window_minimize"),
   toggleMaximizeWindow: () => invoke<void>("window_toggle_maximize"),

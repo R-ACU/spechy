@@ -87,7 +87,7 @@ Cloud transcription sends audio to the selected provider; cloud cleanup sends te
 
 ## Updates
 
-Open **Help > Updates**. Spechy checks for a newer release and offers its installer. Download and run it to update; your existing settings and history are retained.
+Open **Help > Updates**. Spechy checks for a newer release. Choose **Download update** to download it inside the app with a progress indicator, then **Install update**. Spechy verifies the download, closes, and opens the Windows installer. Your existing settings and history are retained. Versions before 0.1.2 need one manual installer download to gain this feature.
 
 **Updates are not downloaded or installed silently.** The [permanent download link](https://github.com/R-ACU/spechy-releases/releases/latest/download/Spechy-Setup.exe) always points to the latest published installer, so it can also be used on a website.
 

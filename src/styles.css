@@ -614,3 +614,4 @@ textarea.input { height: auto; padding: 10px 12px; resize: vertical; line-height
 .onb-dot { width: 7px; height: 7px; border-radius: 999px; background: var(--border-strong); transition: background 200ms var(--ease), width 200ms var(--ease); }
 .onb-dot.done { background: var(--text-3); }
 .onb-dot.active { width: 20px; background: var(--ink); }
+.update-progress { width: 100%; height: 6px; accent-color: var(--text); }
