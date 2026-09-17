@@ -145,6 +145,10 @@ export interface HistoryEntry {
   durationMs: number; latencyMs: number; wordCount: number; flagged: boolean; mode: DictationMode;
 }
 export interface HistoryPage { entries: HistoryEntry[]; total: number }
+/** A dictation whose transcription failed; its recording is kept until retried or discarded. */
+export interface FailedDictation {
+  id: string; createdAt: number; mode: DictationMode; appName: string; appTitle: string; durationMs: number; error: string;
+}
 export interface DictionaryEntry { id: string; word: string; misspelling: string; autoLearned: boolean; starred: boolean; createdAt: number; uses: number }
 export interface Snippet { id: string; trigger: string; text: string; createdAt: number; uses: number }
 export interface Transform { id: string; name: string; prompt: string; builtin: boolean; createdAt: number }
@@ -202,6 +206,9 @@ export const api = {
   updateHistoryText: (id: string, text: string) => invoke<void>("update_history_text", { id, text }),
   repolishHistory: (id: string) => invoke<HistoryEntry>("repolish_history", { id }),
   clearHistory: () => invoke<void>("clear_history"),
+  listFailedDictations: () => invoke<FailedDictation[]>("list_failed_dictations"),
+  retryFailedDictation: (id: string) => invoke<void>("retry_failed_dictation", { id }), // result arrives as events
+  discardFailedDictation: (id: string) => invoke<void>("discard_failed_dictation", { id }),
   // dictionary
   listDictionary: () => invoke<DictionaryEntry[]>("list_dictionary"),
   addDictionary: (word: string, misspelling: string) => invoke<DictionaryEntry>("add_dictionary", { word, misspelling }),
@@ -252,4 +259,5 @@ export const events = {
   onToast: (cb: (t: Toast) => void): Promise<UnlistenFn> => listen<Toast>("spechy://toast", (e) => cb(e.payload)),
   onNavigate: (cb: (view: string) => void): Promise<UnlistenFn> => listen<string>("spechy://navigate", (e) => cb(e.payload)),
   onScratchpad: (cb: (text: string) => void): Promise<UnlistenFn> => listen<string>("spechy://scratchpad", (e) => cb(e.payload)),
+  onFailedChanged: (cb: (list: FailedDictation[]) => void): Promise<UnlistenFn> => listen<FailedDictation[]>("spechy://failed-changed", (e) => cb(e.payload)),
 };

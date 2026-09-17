@@ -4,7 +4,7 @@
 use tauri::{Emitter, Manager};
 
 use crate::model::{
-    new_id, now_ms, DictationMode, DictationState, DictionaryEntry, HardwareProfile, HistoryEntry, HistoryPage,
+    new_id, now_ms, DictationMode, DictationState, DictionaryEntry, FailedDictation, HardwareProfile, HistoryEntry, HistoryPage,
     LocalModelFit, LocalServerStatus, MicDevice, ModelInfo, Settings, Snippet, Stats, Transform, EV_SETTINGS_CHANGED,
 };
 
@@ -270,6 +270,26 @@ pub fn repolish_history(id: String) -> Result<HistoryEntry, String> {
 #[tauri::command]
 pub fn clear_history() -> Result<(), String> {
     crate::db::clear_history()
+}
+
+// ---------- Failed dictations ----------
+
+/// Dictations whose transcription failed and whose recording is kept, newest first.
+#[tauri::command]
+pub fn list_failed_dictations() -> Vec<FailedDictation> {
+    crate::failed::list()
+}
+
+/// Transcribe a kept recording again. The text lands on the clipboard and in the
+/// history; the outcome arrives as events.
+#[tauri::command]
+pub fn retry_failed_dictation(id: String) -> Result<(), String> {
+    crate::pipeline::retry(&id, false)
+}
+
+#[tauri::command]
+pub fn discard_failed_dictation(id: String) {
+    crate::failed::discard(&id);
 }
 
 // ---------- Dictionary ----------

@@ -2,7 +2,7 @@
 // The Tauri `invoke` bridge does not exist in a plain browser, so every backend call
 // goes through `safe()` and the view renders an empty state instead of crashing.
 // TESTCODE (2026-09-13): `?mock=1` additionally feeds sample data for visual checks.
-import type { DictionaryEntry, HardwareProfile, HistoryEntry, HistoryPage, LocalModelFit, LocalServerStatus, MicDevice, ModelInfo, ModelSource, Settings, Snippet, Stats } from "./ipc";
+import type { DictionaryEntry, FailedDictation, HardwareProfile, HistoryEntry, HistoryPage, LocalModelFit, LocalServerStatus, MicDevice, ModelInfo, ModelSource, Settings, Snippet, Stats } from "./ipc";
 
 export const MOCK = import.meta.env.DEV && typeof location !== "undefined" && new URLSearchParams(location.search).get("mock") === "1";
 /** TESTCODE (2026-09-13): `?mock=1&onboarding=1` starts the shell in the first run flow. */
@@ -89,6 +89,11 @@ export const mockHistory: HistoryEntry[] = texts.map((text, i) => ({
 }));
 
 export const mockHistoryPage: HistoryPage = { entries: mockHistory, total: mockHistory.length };
+
+export const mockFailed: FailedDictation[] = [
+  { id: "f1", createdAt: Date.now() - 4 * 60_000, mode: "hands-free", appName: "slack.exe", appTitle: "Slack", durationMs: 94_000, error: "Groq: the request timed out" },
+  { id: "f2", createdAt: Date.now() - 50 * 60_000, mode: "push-to-talk", appName: "code.exe", appTitle: "", durationMs: 8_000, error: "Could not reach the transcription service. Check your internet connection." },
+];
 
 export const mockStats: Stats = {
   totalWords: 172_400,

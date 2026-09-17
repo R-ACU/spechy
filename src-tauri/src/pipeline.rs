@@ -10,9 +10,10 @@ use std::time::{Duration, Instant};
 use tauri::{AppHandle, Emitter};
 
 use crate::audio::Recorder;
+use crate::failed::{Part, Pending};
 use crate::model::{
-    new_id, now_ms, DictationMode, DictationState, HistoryEntry, Phase, Toast, EV_HISTORY_ADDED, EV_SCRATCHPAD,
-    EV_STATE, EV_TOAST,
+    new_id, now_ms, DictationMode, DictationState, FailedDictation, HistoryEntry, Phase, Toast, EV_HISTORY_ADDED,
+    EV_SCRATCHPAD, EV_STATE, EV_TOAST,
 };
 use crate::pill::PillState;
 use crate::sound::SoundKind;
@@ -27,12 +28,16 @@ const PARTIAL_INTERVAL: Duration = Duration::from_millis(3500);
 const SEGMENT_SECS: u64 = 60;
 /// How long an error stays on the pill.
 const ERROR_HOLD: Duration = Duration::from_millis(2500);
+/// A failure the user can retry stays clickable on the pill a little longer.
+const RETRY_HOLD: Duration = Duration::from_millis(7000);
 
 static APP: OnceLock<AppHandle> = OnceLock::new();
 static STATE: OnceLock<Mutex<PipelineState>> = OnceLock::new();
 static PARTIAL_IN_FLIGHT: AtomicBool = AtomicBool::new(false);
 /// Incremented on every start and cancel so stale worker threads notice they are obsolete.
 static GENERATION: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+/// Failed dictation the error on the pill belongs to; a click on the pill retries it.
+static PILL_RETRY: Mutex<Option<String>> = Mutex::new(None);
 
 #[derive(Default)]
 struct PipelineState {
@@ -44,9 +49,23 @@ struct PipelineState {
     target_title: String,
     /// Selection captured at the start of a command dictation.
     selection: String,
-    /// Text of the hands-free segments already transcribed.
-    segments: Vec<String>,
+    /// Closed hands-free segments: their text, or their audio when the
+    /// transcription failed (retried when the dictation is finished).
+    parts: Vec<Part>,
     generation: u64,
+}
+
+/// The text of the parts that are already transcribed, in spoken order.
+fn joined_text(parts: &[Part]) -> String {
+    parts
+        .iter()
+        .filter_map(|part| match part {
+            Part::Text(text) => Some(text.trim()),
+            Part::Audio(_) => None,
+        })
+        .filter(|text| !text.is_empty())
+        .collect::<Vec<_>>()
+        .join(" ")
 }
 
 fn state_cell() -> &'static Mutex<PipelineState> {
@@ -118,7 +137,10 @@ pub fn init(handle: AppHandle) {
     if let Err(e) = crate::pill::init(cancel, stop) {
         log::error!("the pill window could not be created: {e}");
     }
+    crate::pill::set_retry_handler(retry_from_pill);
     crate::pill::set_always_visible(settings.show_pill_always);
+    // Prunes recordings past their retention.
+    let _ = crate::failed::list();
 
     let config = crate::hotkey::HotkeyConfig {
         push_to_talk: settings.hotkeys.push_to_talk.clone(),
@@ -231,9 +253,10 @@ pub fn start(mode: DictationMode) -> Result<(), String> {
         s.target_process = app_info.process_name.clone();
         s.target_title = app_info.title.clone();
         s.selection = selection;
-        s.segments.clear();
+        s.parts.clear();
         s.generation = generation;
     }
+    set_pill_retry(None);
 
     crate::hotkey::set_active(true);
     // The push-to-talk chord alone submits a hands-free dictation, so the hook has
@@ -292,7 +315,7 @@ fn spawn_partial_loop(generation: u64) {
             if s.generation != generation || !matches!(s.public.phase, Phase::Recording) {
                 return;
             }
-            let prefix = s.segments.join(" ");
+            let prefix = joined_text(&s.parts);
             s.public.live_text = if prefix.is_empty() { text.clone() } else { format!("{prefix} {text}") };
             s.public.clone()
         };
@@ -349,25 +372,53 @@ fn spawn_segment_loop(generation: u64) {
             }
         }
 
+        // The audio goes in first: a stop during the request below hands it to
+        // the finish step, which transcribes it itself instead of losing it.
+        let index = {
+            let mut s = lock();
+            if s.generation != generation {
+                return;
+            }
+            s.parts.push(Part::Audio(wav.clone()));
+            s.parts.len() - 1
+        };
         let dictionary = crate::db::list_dictionary().unwrap_or_default();
         let vocabulary: Vec<String> = dictionary.iter().map(|d| d.word.clone()).collect();
-        if let Ok(text) = crate::stt::transcribe(
-            &settings.providers,
-            crate::stt::SttRequest {
-                wav: &wav,
-                language: settings.spoken_language(),
-                vocabulary: &vocabulary,
-                partial: false,
-            },
-        ) {
-            if !text.trim().is_empty() {
+        match transcribe_wav(&settings, &vocabulary, &wav) {
+            Ok(text) => {
                 let mut s = lock();
-                if s.generation == generation {
-                    s.segments.push(text.trim().to_string());
+                if s.generation == generation && matches!(s.parts.get(index), Some(Part::Audio(_))) {
+                    s.parts[index] = Part::Text(text.trim().to_string());
                 }
             }
+            // The audio stays: the finish step tries it again, and a failure
+            // there makes the whole dictation retryable.
+            Err(e) => log::warn!("a hands-free segment could not be transcribed yet: {e}"),
         }
     });
+}
+
+fn transcribe_wav(settings: &crate::model::Settings, vocabulary: &[String], wav: &[u8]) -> Result<String, String> {
+    crate::stt::transcribe(
+        &settings.providers,
+        crate::stt::SttRequest { wav, language: settings.spoken_language(), vocabulary, partial: false },
+    )
+}
+
+/// Transcribes every part that is still audio, in place, so a failure halfway
+/// keeps the progress. Returns the full raw text once nothing is left.
+fn transcribe_parts(
+    parts: &mut [Part],
+    settings: &crate::model::Settings,
+    vocabulary: &[String],
+) -> Result<String, String> {
+    for part in parts.iter_mut() {
+        if let Part::Audio(wav) = part {
+            let text = transcribe_wav(settings, vocabulary, wav)?;
+            *part = Part::Text(text.trim().to_string());
+        }
+    }
+    Ok(joined_text(parts))
 }
 
 // ---------- Cancel ----------
@@ -381,7 +432,7 @@ pub fn cancel() {
         GENERATION.fetch_add(1, Ordering::SeqCst);
         s.generation = GENERATION.load(Ordering::SeqCst);
         s.public = DictationState::default();
-        s.segments.clear();
+        s.parts.clear();
         s.selection.clear();
         s.recorder.take()
     };
@@ -394,13 +445,39 @@ pub fn cancel() {
 }
 
 fn fail(message: &str) {
+    show_error(message, None);
+}
+
+/// The transcription failed but the recording is kept: the pill offers a retry.
+fn fail_retryable(message: &str, id: &str) {
+    show_error(message, Some(id.to_string()));
+}
+
+fn set_pill_retry(id: Option<String>) {
+    if let Ok(mut guard) = PILL_RETRY.lock() {
+        *guard = id;
+    }
+}
+
+fn show_error(message: &str, retry_id: Option<String>) {
+    let retry = retry_id.is_some();
     set_phase(Phase::Error, message);
-    crate::pill::set_state(PillState::Error { message: message.to_string() });
-    toast("error", message);
+    set_pill_retry(retry_id);
+    let pill_message = if retry { format!("Click to retry. {message}") } else { message.to_string() };
+    crate::pill::set_state(PillState::Error { message: pill_message, retry });
+    toast(
+        "error",
+        &if retry { format!("{message} The recording was kept, retry it from Home.") } else { message.to_string() },
+    );
     sound(SoundKind::Error);
+    // Only hides the pill when nothing new started in the meantime.
+    let generation = GENERATION.load(Ordering::SeqCst);
     std::thread::spawn(move || {
-        std::thread::sleep(ERROR_HOLD);
-        crate::pill::set_state(PillState::Done);
+        std::thread::sleep(if retry { RETRY_HOLD } else { ERROR_HOLD });
+        if GENERATION.load(Ordering::SeqCst) == generation {
+            set_pill_retry(None);
+            crate::pill::set_state(PillState::Done);
+        }
     });
     let snapshot = {
         let mut s = lock();
@@ -438,8 +515,8 @@ pub fn stop() {
             return; // cancelled while we were stopping
         }
 
-        let segments = lock().segments.clone();
-        if peak < SILENCE_RMS && segments.is_empty() {
+        let parts = std::mem::take(&mut lock().parts);
+        if peak < SILENCE_RMS && parts.is_empty() {
             let snapshot = {
                 let mut s = lock();
                 s.public = DictationState::default();
@@ -450,7 +527,7 @@ pub fn stop() {
             return;
         }
 
-        if let Err(message) = finish(wav, duration_ms, mode, generation, stop_instant, segments) {
+        if let Err(message) = finish(wav, duration_ms, mode, generation, stop_instant, parts) {
             fail(&message);
         }
     });
@@ -462,81 +539,126 @@ fn finish(
     mode: DictationMode,
     generation: u64,
     stop_instant: Instant,
-    segments: Vec<String>,
+    mut parts: Vec<Part>,
 ) -> Result<(), String> {
     let settings = crate::settings::current();
     let dictionary = crate::db::list_dictionary().unwrap_or_default();
-    let snippets = crate::db::list_snippets().unwrap_or_default();
     let vocabulary: Vec<String> = dictionary.iter().map(|d| d.word.clone()).collect();
 
     // Keep the last recording on disk for debugging mic problems (overwritten every time).
     #[cfg(debug_assertions)]
     let _ = std::fs::write(crate::settings::data_dir().join("last-recording.wav"), &wav);
 
-    // 1) Transcribe the last (or only) chunk.
-    let tail = if wav.len() > 1024 {
-        crate::stt::transcribe(
-            &settings.providers,
-            crate::stt::SttRequest {
-                wav: &wav,
-                language: settings.spoken_language(),
-                vocabulary: &vocabulary,
-                partial: false,
-            },
-        )?
-    } else {
-        String::new()
+    let (target_hwnd, target_process, target_title, selection) = {
+        let s = lock();
+        (s.target_hwnd, s.target_process.clone(), s.target_title.clone(), s.selection.clone())
     };
 
-    let mut raw = segments.join(" ");
-    if !tail.trim().is_empty() {
-        if raw.is_empty() {
-            raw = tail.trim().to_string();
-        } else {
-            raw.push(' ');
-            raw.push_str(tail.trim());
-        }
+    // 1) Transcribe the last (or only) chunk plus any segment that failed earlier.
+    if wav.len() > 1024 {
+        parts.push(Part::Audio(wav));
     }
-    let raw = raw.trim().to_string();
+    let raw = match transcribe_parts(&mut parts, &settings, &vocabulary) {
+        Ok(raw) => raw,
+        Err(error) => {
+            if GENERATION.load(Ordering::SeqCst) != generation {
+                return Ok(()); // cancelled: the user threw it away on purpose
+            }
+            let pending = Pending {
+                info: FailedDictation {
+                    id: new_id(),
+                    created_at: now_ms(),
+                    mode,
+                    app_name: target_process,
+                    app_title: target_title,
+                    duration_ms: duration_ms as i64,
+                    error: error.clone(),
+                },
+                target_hwnd,
+                selection,
+                parts,
+            };
+            if let Err(e) = crate::failed::save(&pending) {
+                log::error!("the failed recording could not be kept: {e}");
+                return Err(error);
+            }
+            fail_retryable(&error, &pending.info.id);
+            return Ok(());
+        }
+    };
 
-    if GENERATION.load(Ordering::SeqCst) != generation {
+    let delivery = Delivery {
+        mode,
+        target: Some(target_hwnd),
+        app_name: target_process,
+        app_title: target_title,
+        selection,
+        duration_ms: duration_ms as i64,
+        started: stop_instant,
+        generation,
+    };
+    deliver(&raw, &settings, delivery)
+}
+
+/// Where and how a transcript ends up once it exists.
+struct Delivery {
+    mode: DictationMode,
+    /// Window to paste into; `None` leaves the text on the clipboard (retry from
+    /// the main window, where pasting would land in Spechy itself).
+    target: Option<isize>,
+    app_name: String,
+    app_title: String,
+    selection: String,
+    duration_ms: i64,
+    /// Latency is measured from here to the pasted text.
+    started: Instant,
+    generation: u64,
+}
+
+fn back_to_idle() {
+    let snapshot = {
+        let mut s = lock();
+        s.public = DictationState::default();
+        s.parts.clear();
+        s.selection.clear();
+        s.public.clone()
+    };
+    crate::pill::set_state(PillState::Done);
+    emit_state(&snapshot);
+}
+
+/// Polish, paste (or scratchpad or clipboard) and history for a finished transcript.
+fn deliver(raw: &str, settings: &crate::model::Settings, delivery: Delivery) -> Result<(), String> {
+    let raw = raw.trim().to_string();
+    if GENERATION.load(Ordering::SeqCst) != delivery.generation {
         return Ok(());
     }
-
     if raw.is_empty() {
-        let snapshot = {
-            let mut s = lock();
-            s.public = DictationState::default();
-            s.public.clone()
-        };
-        crate::pill::set_state(PillState::Done);
-        emit_state(&snapshot);
+        back_to_idle();
         return Ok(());
     }
 
     // 2) Polish.
     set_phase(Phase::Polishing, "");
-    let (target_hwnd, target_process, target_title, selection) = {
-        let s = lock();
-        (s.target_hwnd, s.target_process.clone(), s.target_title.clone(), s.selection.clone())
-    };
+    let dictionary = crate::db::list_dictionary().unwrap_or_default();
+    let snippets = crate::db::list_snippets().unwrap_or_default();
     let foreground = crate::winutil::ForegroundApp {
-        process_name: target_process.clone(),
-        title: target_title.clone(),
-        hwnd: target_hwnd,
+        process_name: delivery.app_name.clone(),
+        title: delivery.app_title.clone(),
+        hwnd: delivery.target.unwrap_or(0),
     };
-    let vibe = is_vibe_app(&settings, &target_process);
-    let command_instruction = if mode == DictationMode::Command { Some(raw.as_str()) } else { None };
+    let vibe = is_vibe_app(settings, &delivery.app_name);
+    let command = delivery.mode == DictationMode::Command;
 
     let polished = crate::polish::polish(crate::polish::PolishContext {
         raw: &raw,
-        settings: &settings,
+        settings,
         dictionary: &dictionary,
         snippets: &snippets,
         app: &foreground,
         vibe,
-        command_instruction,
-        selection: if mode == DictationMode::Command { Some(selection.as_str()) } else { None },
+        command_instruction: if command { Some(raw.as_str()) } else { None },
+        selection: if command { Some(delivery.selection.as_str()) } else { None },
     });
 
     let (text, used_dictionary, used_snippets, dictionary_fixes, polish_failed) = match polished {
@@ -548,17 +670,11 @@ fn finish(
         }
     };
 
-    if GENERATION.load(Ordering::SeqCst) != generation {
+    if GENERATION.load(Ordering::SeqCst) != delivery.generation {
         return Ok(());
     }
     if text.trim().is_empty() {
-        let snapshot = {
-            let mut s = lock();
-            s.public = DictationState::default();
-            s.public.clone()
-        };
-        crate::pill::set_state(PillState::Done);
-        emit_state(&snapshot);
+        back_to_idle();
         return Ok(());
     }
 
@@ -577,7 +693,7 @@ fn finish(
         if let Some(app) = app() {
             let _ = app.emit(EV_SCRATCHPAD, combined);
         }
-    } else {
+    } else if let Some(target_hwnd) = delivery.target {
         crate::winutil::focus_hwnd(target_hwnd);
         // Give the target a moment to take the focus back before Ctrl+V.
         std::thread::sleep(Duration::from_millis(60));
@@ -588,22 +704,25 @@ fn finish(
                 return Err(format!("The text could not be inserted, it is on the clipboard. {e2}"));
             }
         }
+    } else {
+        crate::paste::set_clipboard(&text)?;
+        toast("success", "The dictation is on your clipboard.");
     }
 
     // 4) History.
-    let latency_ms = stop_instant.elapsed().as_millis() as i64;
+    let latency_ms = delivery.started.elapsed().as_millis() as i64;
     let entry = HistoryEntry {
         id: new_id(),
         created_at: now_ms(),
         text: text.clone(),
         raw_text: raw,
-        app_name: if to_scratchpad { "Spechy".to_string() } else { target_process },
-        app_title: if to_scratchpad { "Scratchpad".to_string() } else { target_title },
-        duration_ms: duration_ms as i64,
+        app_name: if to_scratchpad { "Spechy".to_string() } else { delivery.app_name },
+        app_title: if to_scratchpad { "Scratchpad".to_string() } else { delivery.app_title },
+        duration_ms: delivery.duration_ms,
         latency_ms,
         word_count: text.split_whitespace().count() as i64,
         flagged: false,
-        mode,
+        mode: delivery.mode,
     };
     if let Err(e) = crate::db::insert_history_with_fixes(&entry, dictionary_fixes) {
         log::error!("the dictation could not be saved: {e}");
@@ -619,15 +738,92 @@ fn finish(
     }
 
     // 5) Back to idle.
-    let snapshot = {
+    back_to_idle();
+    Ok(())
+}
+
+// ---------- Retry ----------
+
+fn retry_from_pill() {
+    let id = PILL_RETRY.lock().ok().and_then(|mut guard| guard.take());
+    if let Some(id) = id {
+        if let Err(e) = retry(&id, true) {
+            fail(&e);
+        }
+    }
+}
+
+/// Send a kept recording through transcription again. From the pill the text is
+/// pasted where the dictation was meant to go; from the main window it lands on
+/// the clipboard. Returns once the work has started; the outcome arrives as
+/// events, a failure keeps the recording (with the progress made) for later.
+pub fn retry(id: &str, into_target: bool) -> Result<(), String> {
+    let mut pending = {
         let mut s = lock();
-        s.public = DictationState::default();
-        s.segments.clear();
+        if !matches!(s.public.phase, Phase::Idle | Phase::Error) || s.recorder.is_some() {
+            return Err("Finish the current dictation first.".into());
+        }
+        let pending = crate::failed::load(id)?;
+        let generation = GENERATION.fetch_add(1, Ordering::SeqCst) + 1;
+        s.generation = generation;
+        s.public = DictationState {
+            phase: Phase::Transcribing,
+            mode: pending.info.mode,
+            started_at_ms: now_ms(),
+            ..DictationState::default()
+        };
+        s.parts.clear();
         s.selection.clear();
-        s.public.clone()
+        pending
     };
-    crate::pill::set_state(PillState::Done);
-    emit_state(&snapshot);
+    let generation = GENERATION.load(Ordering::SeqCst);
+    set_pill_retry(None);
+    crate::pill::set_state(PillState::Processing);
+    emit_state(&state());
+
+    std::thread::spawn(move || {
+        let started = Instant::now();
+        let settings = crate::settings::current();
+        let dictionary = crate::db::list_dictionary().unwrap_or_default();
+        let vocabulary: Vec<String> = dictionary.iter().map(|d| d.word.clone()).collect();
+
+        let raw = match transcribe_parts(&mut pending.parts, &settings, &vocabulary) {
+            Ok(raw) => raw,
+            Err(error) => {
+                if GENERATION.load(Ordering::SeqCst) != generation {
+                    return;
+                }
+                pending.info.error = error.clone();
+                if let Err(e) = crate::failed::save(&pending) {
+                    log::error!("the retry progress could not be kept: {e}");
+                }
+                fail_retryable(&error, &pending.info.id);
+                return;
+            }
+        };
+        if GENERATION.load(Ordering::SeqCst) != generation {
+            return;
+        }
+
+        let id = pending.info.id.clone();
+        let delivery = Delivery {
+            mode: pending.info.mode,
+            target: if into_target { Some(pending.target_hwnd) } else { None },
+            app_name: pending.info.app_name,
+            app_title: pending.info.app_title,
+            selection: pending.selection,
+            duration_ms: pending.info.duration_ms,
+            started,
+            generation,
+        };
+        // The text exists now; from here on the recording is no longer needed,
+        // even when pasting fails (the text is then on the clipboard).
+        let result = deliver(&raw, &settings, delivery);
+        crate::failed::discard(&id);
+        if let Err(message) = result {
+            fail(&message);
+        }
+    });
     Ok(())
 }
 
@@ -641,4 +837,65 @@ fn is_vibe_app(settings: &crate::model::Settings, process_name: &str) -> bool {
         return true;
     }
     crate::winutil::app_category(&name, "") == "coding"
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::io::{Read, Write};
+
+    fn custom_settings(base_url: &str) -> crate::model::Settings {
+        let mut settings = crate::model::Settings::default();
+        settings.providers.stt_provider = "custom".into();
+        settings.providers.custom_stt_base_url = base_url.into();
+        settings.providers.custom_stt_model = "whisper-1".into();
+        settings
+    }
+
+    /// Answers every request with one transcript, like an OpenAI-compatible server.
+    fn fake_server(transcript: &'static str, requests: usize) -> String {
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let address = listener.local_addr().unwrap();
+        std::thread::spawn(move || {
+            for stream in listener.incoming().take(requests) {
+                let mut stream = stream.unwrap();
+                let mut buffer = [0u8; 65536];
+                let mut request = Vec::new();
+                // Read until the multipart body is complete (it ends with the closing boundary).
+                loop {
+                    let n = stream.read(&mut buffer).unwrap_or(0);
+                    request.extend_from_slice(&buffer[..n]);
+                    if n == 0 || request.ends_with(b"--\r\n") {
+                        break;
+                    }
+                }
+                let body = format!("{{\"text\":\"{transcript}\"}}");
+                let _ = write!(
+                    stream,
+                    "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                    body.len()
+                );
+            }
+        });
+        format!("http://{address}/v1")
+    }
+
+    #[test]
+    fn a_failed_transcription_keeps_every_part_for_the_retry() {
+        // Nothing listens on the discard port, the request fails at once.
+        let settings = custom_settings("http://127.0.0.1:9/v1");
+        let mut parts = vec![Part::Text("first minute".into()), Part::Audio(vec![0; 2048])];
+        let before = parts.clone();
+        assert!(transcribe_parts(&mut parts, &settings, &[]).is_err());
+        assert_eq!(parts, before);
+    }
+
+    #[test]
+    fn a_retry_joins_the_kept_text_and_the_new_transcripts_in_order() {
+        let settings = custom_settings(&fake_server("second part", 2));
+        let mut parts = vec![Part::Audio(vec![0; 2048]), Part::Text("middle".into()), Part::Audio(vec![0; 2048])];
+        let raw = transcribe_parts(&mut parts, &settings, &[]).unwrap();
+        assert_eq!(raw, "second part middle second part");
+        assert!(parts.iter().all(|part| matches!(part, Part::Text(_))));
+    }
 }

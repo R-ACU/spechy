@@ -4,6 +4,7 @@ pub mod audio;
 pub mod autostart;
 pub mod commands;
 pub mod db;
+pub mod failed;
 pub mod hardware;
 pub mod hotkey;
 pub mod local_models;
@@ -72,6 +73,9 @@ pub fn run() {
             commands::update_history_text,
             commands::repolish_history,
             commands::clear_history,
+            commands::list_failed_dictations,
+            commands::retry_failed_dictation,
+            commands::discard_failed_dictation,
             commands::list_dictionary,
             commands::add_dictionary,
             commands::update_dictionary,

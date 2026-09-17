@@ -12,6 +12,7 @@ pub const EV_TOAST: &str = "spechy://toast"; // payload: Toast
 pub const EV_NAVIGATE: &str = "spechy://navigate"; // payload: String (view id, e.g. "settings")
 pub const EV_MIC_LEVEL: &str = "spechy://mic-level"; // payload: f32 (0.0..1.0, microphone preview only)
 pub const EV_SCRATCHPAD: &str = "spechy://scratchpad"; // payload: String (full scratchpad text after a dictation landed there)
+pub const EV_FAILED_CHANGED: &str = "spechy://failed-changed"; // payload: Vec<FailedDictation>, newest first
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
@@ -422,6 +423,22 @@ pub struct HistoryEntry {
     pub word_count: i64,
     pub flagged: bool,
     pub mode: DictationMode,
+}
+
+/// A dictation whose transcription failed. Its recording is kept until the user
+/// retries or discards it.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct FailedDictation {
+    pub id: String,
+    /// Unix ms of the failure.
+    pub created_at: i64,
+    pub mode: DictationMode,
+    pub app_name: String,
+    pub app_title: String,
+    pub duration_ms: i64,
+    /// Why the last attempt failed, readable.
+    pub error: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]

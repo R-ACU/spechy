@@ -26,6 +26,8 @@ pub enum PillState {
     Processing,
     Error {
         message: String,
+        /// The whole pill is clickable and retries the failed dictation.
+        retry: bool,
     },
     Done,
 }
@@ -88,6 +90,16 @@ struct Callbacks {
 }
 
 static CALLBACKS: OnceLock<Mutex<Callbacks>> = OnceLock::new();
+static RETRY_HANDLER: OnceLock<Mutex<Box<dyn Fn() + Send>>> = OnceLock::new();
+
+/// Called when the user clicks an error pill that offers a retry.
+pub fn set_retry_handler(on_retry: impl Fn() + Send + 'static) {
+    let _ = RETRY_HANDLER.set(Mutex::new(Box::new(on_retry)));
+}
+
+fn offers_retry() -> bool {
+    matches!(current_state(), PillState::Error { retry: true, .. })
+}
 static WINDOW: AtomicIsize = AtomicIsize::new(0);
 static ALWAYS_VISIBLE: AtomicBool = AtomicBool::new(false);
 static STARTED: AtomicBool = AtomicBool::new(false);
@@ -299,15 +311,7 @@ impl<'a> Canvas<'a> {
     }
 
     /// The rim highlight: light catching the glass edge, bright at the top left.
-    fn glass_rim(
-        &mut self,
-        x: f32,
-        y: f32,
-        width: f32,
-        height: f32,
-        radius: f32,
-        thickness: f32,
-    ) {
+    fn glass_rim(&mut self, x: f32, y: f32, width: f32, height: f32, radius: f32, thickness: f32) {
         let half = thickness / 2.0;
         self.fill_shaded(
             (
@@ -316,9 +320,7 @@ impl<'a> Canvas<'a> {
                 x + width + thickness,
                 y + height + thickness,
             ),
-            move |px, py| {
-                rounded_rect_distance(px, py, x, y, width, height, radius).abs() - half
-            },
+            move |px, py| rounded_rect_distance(px, py, x, y, width, height, radius).abs() - half,
             move |px, py| {
                 let t = (((px - x) / width + (py - y) / height) / 2.0).clamp(0.0, 1.0);
                 // Ease so the top edge keeps its highlight a little longer.
@@ -675,7 +677,10 @@ fn draw_dynamic(canvas: &mut Canvas, state: &PillState, layout: &Layout, frame: 
     let scale = layout.scale;
     let time = frame as f32 * 0.016;
 
-    if matches!(state, PillState::Idle | PillState::Error { .. } | PillState::Hidden) {
+    if matches!(
+        state,
+        PillState::Idle | PillState::Error { .. } | PillState::Hidden
+    ) {
         if let Ok(mut areas) = hit_areas().lock() {
             *areas = HitAreas::default();
         }
@@ -794,8 +799,8 @@ mod win {
     use windows::Win32::Graphics::Gdi::{
         CreateCompatibleDC, CreateDIBSection, CreateFontW, DeleteObject, DrawTextW, GdiFlush,
         IntersectClipRect, SelectClipRgn, SelectObject, SetBkMode, SetTextColor, UpdateWindow,
-        AC_SRC_ALPHA, AC_SRC_OVER, ANTIALIASED_QUALITY, BITMAPINFO, BITMAPINFOHEADER,
-        BLENDFUNCTION, BI_RGB, CLIP_DEFAULT_PRECIS, DEFAULT_CHARSET, DIB_RGB_COLORS, DT_CALCRECT,
+        AC_SRC_ALPHA, AC_SRC_OVER, ANTIALIASED_QUALITY, BITMAPINFO, BITMAPINFOHEADER, BI_RGB,
+        BLENDFUNCTION, CLIP_DEFAULT_PRECIS, DEFAULT_CHARSET, DIB_RGB_COLORS, DT_CALCRECT,
         DT_CENTER, DT_END_ELLIPSIS, DT_NOPREFIX, DT_SINGLELINE, DT_VCENTER, DT_WORDBREAK,
         FF_DONTCARE, FW_NORMAL, HBITMAP, HDC, HGDIOBJ, OUT_TT_PRECIS, TRANSPARENT,
     };
@@ -810,12 +815,18 @@ mod win {
     /// animation timer so a busy message queue cannot keep the pill on screen.
     const TIMER_HIDE: usize = 2;
     const DONE_VISIBLE_MS: u32 = 600;
+    /// Independent of animation: idle and retry pills must stay above other apps too.
+    const TIMER_Z_ORDER: usize = 3;
+    const Z_ORDER_INTERVAL_MS: u32 = 250;
 
     /// Text is drawn into a premultiplied buffer, so its color has to be
     /// multiplied by the glass alpha and the text alpha up front.
     const TEXT_ALPHA: f32 = 0.92;
 
-    pub fn start(cancel: Box<dyn Fn() + Send>, confirm: Box<dyn Fn() + Send>) -> Result<(), String> {
+    pub fn start(
+        cancel: Box<dyn Fn() + Send>,
+        confirm: Box<dyn Fn() + Send>,
+    ) -> Result<(), String> {
         let _ = CALLBACKS.set(Mutex::new(Callbacks { cancel, confirm }));
 
         let (sender, receiver) = std::sync::mpsc::channel::<Result<(), String>>();
@@ -901,6 +912,10 @@ mod win {
                 LRESULT(0)
             }
             WM_TIMER => {
+                if wparam.0 == TIMER_Z_ORDER {
+                    ensure_topmost(hwnd);
+                    return LRESULT(0);
+                }
                 if wparam.0 == TIMER_HIDE {
                     let _ = KillTimer(hwnd, TIMER_HIDE);
                     if matches!(current_state(), PillState::Done) {
@@ -923,6 +938,24 @@ mod win {
                 LRESULT(0)
             }
             WM_NCHITTEST => LRESULT(HTCLIENT as isize),
+            WM_SETCURSOR if offers_retry() => {
+                if let Ok(hand) = LoadCursorW(None, IDC_HAND) {
+                    SetCursor(hand);
+                }
+                LRESULT(1)
+            }
+            WM_LBUTTONDOWN if offers_retry() => {
+                // Run outside the window procedure: the handler touches pipeline
+                // state and calls back into set_state.
+                std::thread::spawn(|| {
+                    if let Some(cell) = RETRY_HANDLER.get() {
+                        if let Ok(handler) = cell.lock() {
+                            (handler)();
+                        }
+                    }
+                });
+                LRESULT(0)
+            }
             WM_LBUTTONDOWN => {
                 let x = (lparam.0 & 0xFFFF) as i16 as f32;
                 let y = ((lparam.0 >> 16) & 0xFFFF) as i16 as f32;
@@ -953,6 +986,64 @@ mod win {
             }
             _ => DefWindowProcW(hwnd, message, wparam, lparam),
         }
+    }
+
+    /// Reassert Z-order without ever activating the dictation UI. TOPMOST at
+    /// creation alone does not keep us above windows promoted there later.
+    unsafe fn raise_without_focus(hwnd: HWND) {
+        if let Err(error) = SetWindowPos(
+            hwnd,
+            HWND_TOPMOST,
+            0,
+            0,
+            0,
+            0,
+            SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE | SWP_NOOWNERZORDER,
+        ) {
+            log::warn!("Could not restore pill Z-order: {error}");
+        }
+    }
+
+    unsafe fn ensure_topmost(hwnd: HWND) {
+        // A queued timer must never bring a hidden pill back.
+        if !IsWindowVisible(hwnd).as_bool() {
+            return;
+        }
+        if GetWindowLongW(hwnd, GWL_EXSTYLE) as u32 & WS_EX_TOPMOST.0 == 0 {
+            raise_without_focus(hwnd);
+            return;
+        }
+        let mut pill_rect = RECT::default();
+        if GetWindowRect(hwnd, &mut pill_rect).is_err() {
+            return;
+        }
+        // Only repair actual overlap, not every animation frame or unrelated
+        // topmost window elsewhere on the desktop. Bound traversal if Z-order
+        // changes under us while other apps are opening/closing windows.
+        let mut previous = GetWindow(hwnd, GW_HWNDPREV);
+        for _ in 0..256 {
+            let Ok(other) = previous else { break };
+            if other.0.is_null() {
+                break;
+            }
+            let mut rect = RECT::default();
+            if IsWindowVisible(other).as_bool()
+                && GetWindowRect(other, &mut rect).is_ok()
+                && rect.left < pill_rect.right
+                && rect.right > pill_rect.left
+                && rect.top < pill_rect.bottom
+                && rect.bottom > pill_rect.top
+            {
+                raise_without_focus(hwnd);
+                break;
+            }
+            previous = GetWindow(other, GW_HWNDPREV);
+        }
+    }
+
+    unsafe fn hide_window(hwnd: HWND) {
+        let _ = KillTimer(hwnd, TIMER_Z_ORDER);
+        let _ = ShowWindow(hwnd, SW_HIDE);
     }
 
     unsafe fn apply_state(hwnd: HWND) {
@@ -1018,12 +1109,17 @@ mod win {
 
         if matches!(state, PillState::Hidden) && !hiding {
             let _ = KillTimer(hwnd, TIMER_ANIMATION);
-            let _ = ShowWindow(hwnd, SW_HIDE);
+            hide_window(hwnd);
             return;
         }
 
         render(hwnd);
+        let was_visible = IsWindowVisible(hwnd).as_bool();
         let _ = ShowWindow(hwnd, SW_SHOWNOACTIVATE);
+        raise_without_focus(hwnd);
+        if !was_visible {
+            SetTimer(hwnd, TIMER_Z_ORDER, Z_ORDER_INTERVAL_MS, None);
+        }
         let _ = UpdateWindow(hwnd);
         sync_timer(hwnd);
     }
@@ -1057,7 +1153,159 @@ mod win {
             was_hide
         });
         if hide_now {
-            let _ = ShowWindow(hwnd, SW_HIDE);
+            hide_window(hwnd);
+        }
+    }
+
+    #[cfg(test)]
+    mod tests {
+        use super::*;
+
+        struct TestWindow(HWND);
+        impl Drop for TestWindow {
+            fn drop(&mut self) {
+                unsafe {
+                    let _ = DestroyWindow(self.0);
+                }
+            }
+        }
+
+        unsafe fn pump_for(ms: u64) {
+            let until = std::time::Instant::now() + std::time::Duration::from_millis(ms);
+            while std::time::Instant::now() < until {
+                let mut message = MSG::default();
+                while PeekMessageW(&mut message, None, 0, 0, PM_REMOVE).as_bool() {
+                    let _ = TranslateMessage(&message);
+                    DispatchMessageW(&message);
+                }
+                std::thread::sleep(std::time::Duration::from_millis(5));
+            }
+        }
+
+        unsafe fn above(first: HWND, second: HWND) -> bool {
+            let mut cursor = GetWindow(second, GW_HWNDPREV);
+            for _ in 0..256 {
+                let Ok(hwnd) = cursor else { return false };
+                if hwnd == first {
+                    return true;
+                }
+                if hwnd.0.is_null() {
+                    return false;
+                }
+                cursor = GetWindow(hwnd, GW_HWNDPREV);
+            }
+            false
+        }
+
+        #[test]
+        #[ignore = "Creates small native windows; run on an interactive Windows desktop"]
+        fn pill_recovers_z_order_without_stealing_focus() {
+            unsafe {
+                let pill = TestWindow(create_window().unwrap());
+                let competitor = TestWindow(
+                    CreateWindowExW(
+                        WS_EX_TOPMOST | WS_EX_NOACTIVATE | WS_EX_TOOLWINDOW,
+                        w!("STATIC"),
+                        w!("Spechy Z-order test"),
+                        WS_POPUP,
+                        0,
+                        0,
+                        195,
+                        52,
+                        None,
+                        None,
+                        HINSTANCE(GetModuleHandleW(None).unwrap().0),
+                        None,
+                    )
+                    .unwrap(),
+                );
+                for state in [
+                    PillState::Idle,
+                    PillState::Recording {
+                        level: 0.3,
+                        live_text: "Z-order regression test".into(),
+                    },
+                    PillState::Processing,
+                    PillState::Error {
+                        message: "Click to retry".into(),
+                        retry: true,
+                    },
+                ] {
+                    *state_cell().lock().unwrap() = state;
+                    apply_state(pill.0);
+                    pump_for(400);
+                    let mut before = RECT::default();
+                    GetWindowRect(pill.0, &mut before).unwrap();
+                    SetWindowPos(
+                        competitor.0,
+                        HWND_TOPMOST,
+                        before.left,
+                        before.top,
+                        before.right - before.left,
+                        before.bottom - before.top,
+                        SWP_NOACTIVATE | SWP_SHOWWINDOW,
+                    )
+                    .unwrap();
+                    assert!(
+                        above(competitor.0, pill.0),
+                        "test must reproduce an occluded pill"
+                    );
+                    let focus = GetForegroundWindow();
+                    pump_for(600);
+                    assert!(
+                        above(pill.0, competitor.0),
+                        "visible pill must recover automatically"
+                    );
+                    assert_eq!(GetForegroundWindow(), focus, "repair must not steal focus");
+                    let mut after = RECT::default();
+                    GetWindowRect(pill.0, &mut after).unwrap();
+                    assert_eq!(
+                        (before.left, before.top, before.right, before.bottom),
+                        (after.left, after.top, after.right, after.bottom)
+                    );
+                }
+                // Also recover if an external tool removes the topmost style.
+                SetWindowPos(
+                    pill.0,
+                    HWND_NOTOPMOST,
+                    0,
+                    0,
+                    0,
+                    0,
+                    SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE,
+                )
+                .unwrap();
+                assert_eq!(
+                    GetWindowLongW(pill.0, GWL_EXSTYLE) as u32 & WS_EX_TOPMOST.0,
+                    0
+                );
+                pump_for(600);
+                assert_ne!(
+                    GetWindowLongW(pill.0, GWL_EXSTYLE) as u32 & WS_EX_TOPMOST.0,
+                    0
+                );
+
+                *state_cell().lock().unwrap() = PillState::Hidden;
+                apply_state(pill.0);
+                pump_for(600);
+                assert!(!IsWindowVisible(pill.0).as_bool());
+                assert!(
+                    KillTimer(pill.0, TIMER_Z_ORDER).is_err(),
+                    "hidden pill must stop its timer"
+                );
+                // Simulate an already queued tick after hiding.
+                window_proc(pill.0, WM_TIMER, WPARAM(TIMER_Z_ORDER), LPARAM(0));
+                assert!(!IsWindowVisible(pill.0).as_bool());
+                *state_cell().lock().unwrap() = PillState::Idle;
+                apply_state(pill.0);
+                assert!(IsWindowVisible(pill.0).as_bool());
+                assert!(
+                    above(pill.0, competitor.0),
+                    "re-show must raise immediately"
+                );
+                hide_window(pill.0);
+                *state_cell().lock().unwrap() = PillState::Hidden;
+            }
         }
     }
 
@@ -1275,7 +1523,7 @@ mod win {
         let scale_bits = scale.to_bits();
         let text = match state {
             PillState::Recording { live_text, .. } => live_text.clone(),
-            PillState::Error { message } => message.clone(),
+            PillState::Error { message, .. } => message.clone(),
             _ => String::new(),
         };
         let is_error = matches!(state, PillState::Error { .. });
@@ -1352,11 +1600,7 @@ mod win {
             if started {
                 motion = Motion::Resize;
                 progress = 0.0;
-                log::debug!(
-                    "pill: resize to {:.0}x{:.0}",
-                    rest.0,
-                    rest.1
-                );
+                log::debug!("pill: resize to {:.0}x{:.0}", rest.0, rest.1);
                 sync_timer(hwnd);
             }
         }
@@ -1509,9 +1753,11 @@ mod win {
             // scaled, so it does not blur during the appear and disappear.
             if !text.is_empty() && motion == Motion::Resize {
                 surface.alpha_scratch.clear();
-                surface
-                    .alpha_scratch
-                    .extend((3..surface.byte_count).step_by(4).map(|i| *surface.bits.add(i)));
+                surface.alpha_scratch.extend(
+                    (3..surface.byte_count)
+                        .step_by(4)
+                        .map(|i| *surface.bits.add(i)),
+                );
                 draw_text(surface, &layout, &text, is_error, total_height, scale);
                 let _ = GdiFlush();
                 for (slot, index) in (3..surface.byte_count).step_by(4).enumerate() {

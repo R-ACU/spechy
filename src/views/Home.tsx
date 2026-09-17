@@ -1,8 +1,8 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Copy, Flag, MoreVertical, Search, Trash2, Wand2, X } from "lucide-react";
-import { api, events, type HistoryEntry, type Stats } from "../lib/ipc";
+import { Copy, Flag, MoreVertical, RotateCcw, Search, Trash2, Wand2, X } from "lucide-react";
+import { api, events, type FailedDictation, type HistoryEntry, type Stats } from "../lib/ipc";
 import { t, useStore } from "../lib/store";
-import { MOCK, mockHistoryPage, mockStats, safe } from "../lib/fallback";
+import { MOCK, mockFailed, mockHistoryPage, mockStats, safe } from "../lib/fallback";
 import { Button, Dialog, IconButton, Kbd, Menu, compactNumber, dayLabel, formatTime } from "../components/ui";
 
 const PAGE = 50;
@@ -114,6 +114,37 @@ function Row({ entry, onChange, onDelete, onToast }: {
   );
 }
 
+function durationLabel(ms: number) {
+  const seconds = Math.max(1, Math.round(ms / 1000));
+  if (seconds < 60) return `${seconds} s`;
+  return `${Math.floor(seconds / 60)}:${String(seconds % 60).padStart(2, "0")} min`;
+}
+
+function FailedRow({ item, busy, onRetry, onDiscard }: {
+  item: FailedDictation;
+  busy: boolean;
+  onRetry: () => void;
+  onDiscard: () => void;
+}) {
+  const { settings } = useStore();
+  const app = item.appTitle || item.appName.replace(/\.exe$/i, "") || "Unknown app";
+  return (
+    <div className="hist-row failed-row">
+      <div className="hist-time">{formatTime(item.createdAt, settings.appLanguage)}</div>
+      <div className="hist-body">
+        <div className="failed-title">{durationLabel(item.durationMs)} recording for {app}</div>
+        <div className="failed-error faint">{item.error}</div>
+      </div>
+      <div className="failed-actions">
+        <Button variant="secondary" size="sm" onClick={onRetry} disabled={busy}>
+          <RotateCcw size={14} />{busy ? "Retrying" : "Retry"}
+        </Button>
+        <IconButton label="Discard recording" onClick={onDiscard} disabled={busy}><Trash2 size={16} /></IconButton>
+      </div>
+    </div>
+  );
+}
+
 export default function Home() {
   const { settings, toast } = useStore();
   const lang = settings.appLanguage;
@@ -123,6 +154,8 @@ export default function Home() {
   const [query, setQuery] = useState("");
   const [searchOpen, setSearchOpen] = useState(false);
   const [loading, setLoading] = useState(true);
+  const [failed, setFailed] = useState<FailedDictation[]>([]);
+  const [retrying, setRetrying] = useState<string | null>(null);
   const sentinel = useRef<HTMLDivElement>(null);
 
   const loadStats = useCallback(() => {
@@ -153,6 +186,29 @@ export default function Home() {
     }).then((f) => { un = f; }).catch(() => {});
     return () => un?.();
   }, [loadStats]);
+
+  useEffect(() => {
+    void safe(() => api.listFailedDictations(), MOCK ? mockFailed : []).then(setFailed);
+    let unFailed: (() => void) | undefined;
+    let unState: (() => void) | undefined;
+    events.onFailedChanged((list) => { setFailed(list); setRetrying(null); }).then((f) => { unFailed = f; }).catch(() => {});
+    // A retry that ends without touching the list (cancelled) must not stay busy.
+    events.onState((s) => { if (s.phase === "idle") setRetrying(null); }).then((f) => { unState = f; }).catch(() => {});
+    return () => { unFailed?.(); unState?.(); };
+  }, []);
+
+  const retry = (id: string) => {
+    setRetrying(id);
+    api.retryFailedDictation(id).catch((e: unknown) => {
+      setRetrying(null);
+      toast({ kind: "error", message: typeof e === "string" ? e : "Retry failed" });
+    });
+  };
+
+  const discard = (id: string) => {
+    setFailed((prev) => prev.filter((x) => x.id !== id));
+    api.discardFailedDictation(id).catch(() => toast({ kind: "error", message: "Could not discard the recording" }));
+  };
 
   const hasMore = entries.length < total;
 
@@ -206,7 +262,17 @@ export default function Home() {
 
       <div className="home-grid">
         <div className="home-main">
-          {entries.length === 0 && !loading && (
+          {failed.length > 0 && (
+            <section className="day-group">
+              <div className="section-label day-label">Not transcribed</div>
+              <div className="hist-card">
+                {failed.map((f) => (
+                  <FailedRow key={f.id} item={f} busy={retrying === f.id} onRetry={() => retry(f.id)} onDiscard={() => discard(f.id)} />
+                ))}
+              </div>
+            </section>
+          )}
+          {entries.length === 0 && failed.length === 0 && !loading && (
             <div className="empty-state">
               <p className="empty-lead">Hold <Hotkey chord={settings.hotkeys.pushToTalk} /> and speak.</p>
               <p className="faint">Your dictations show up here.</p>

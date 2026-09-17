@@ -144,9 +144,18 @@ fn send(inputs: &[windows::Win32::UI::Input::KeyboardAndMouse::INPUT]) {
     }
 }
 
+/// Unassigned virtual key, pressed between a held Alt or Win and its release.
+#[cfg(windows)]
+const MASK_KEY: u16 = 0xE8;
+
 /// The user just let go of the hotkey, but Windows may still see Ctrl or Win as
 /// held. Sending a key-up for every physically held modifier first makes the
 /// synthetic Ctrl+V arrive as a plain Ctrl+V.
+///
+/// A held Alt or Win whose only partner key was swallowed by the hook (the Z of
+/// Shift+Alt+Z) would be released as a bare tap: apps then open their menu and
+/// eat the Ctrl+V, and Alt+Shift switches the keyboard layout. A tap of an
+/// unassigned key in between turns it into an ordinary chord.
 #[cfg(windows)]
 fn release_held_modifiers() {
     use windows::Win32::UI::Input::KeyboardAndMouse::{
@@ -163,18 +172,33 @@ fn release_held_modifiers() {
         VK_LWIN,
         VK_RWIN,
     ];
-    let mut inputs = Vec::new();
+    let mut held = Vec::new();
     unsafe {
         for vk in modifiers {
             if (GetAsyncKeyState(vk.0 as i32) as u16 & 0x8000) != 0 {
-                inputs.push(key_input(vk.0, true));
+                held.push(vk.0);
             }
         }
     }
+    let inputs = release_sequence(&held);
     if !inputs.is_empty() {
         send(&inputs);
         std::thread::sleep(Duration::from_millis(20));
     }
+}
+
+/// Key events that let go of `held` modifiers without a bare Alt or Win tap.
+#[cfg(windows)]
+fn release_sequence(held: &[u16]) -> Vec<windows::Win32::UI::Input::KeyboardAndMouse::INPUT> {
+    // VK_LMENU, VK_RMENU, VK_LWIN, VK_RWIN
+    let needs_mask = held.iter().any(|vk| matches!(*vk, 0xA4 | 0xA5 | 0x5B | 0x5C));
+    let mut inputs = Vec::with_capacity(held.len() + 2);
+    if needs_mask {
+        inputs.push(key_input(MASK_KEY, false));
+        inputs.push(key_input(MASK_KEY, true));
+    }
+    inputs.extend(held.iter().map(|vk| key_input(*vk, true)));
+    inputs
 }
 
 #[cfg(windows)]
@@ -271,6 +295,32 @@ pub fn copy_selection() -> Option<String> {
         let _ = set_clipboard(&old);
     }
     selection.filter(|s| !s.is_empty())
+}
+
+#[cfg(all(test, windows))]
+mod tests {
+    use super::*;
+
+    fn keys(held: &[u16]) -> Vec<(u16, bool)> {
+        use windows::Win32::UI::Input::KeyboardAndMouse::KEYEVENTF_KEYUP;
+        release_sequence(held)
+            .iter()
+            .map(|input| unsafe { (input.Anonymous.ki.wVk.0, input.Anonymous.ki.dwFlags.contains(KEYEVENTF_KEYUP)) })
+            .collect()
+    }
+
+    #[test]
+    fn a_held_alt_is_masked_before_it_is_released() {
+        // Shift+Alt+Z: the Z never reached the app, so Alt must not arrive as a bare tap.
+        assert_eq!(keys(&[0xA0, 0xA4]), vec![(MASK_KEY, false), (MASK_KEY, true), (0xA0, true), (0xA4, true)]);
+        assert_eq!(keys(&[0xA2, 0x5B]), vec![(MASK_KEY, false), (MASK_KEY, true), (0xA2, true), (0x5B, true)]);
+    }
+
+    #[test]
+    fn ctrl_and_shift_alone_need_no_mask() {
+        assert_eq!(keys(&[0xA2, 0xA1]), vec![(0xA2, true), (0xA1, true)]);
+        assert!(keys(&[]).is_empty());
+    }
 }
 
 // ------------------------------------------------------------ non-Windows

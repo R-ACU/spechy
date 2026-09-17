@@ -103,7 +103,7 @@ When you dictate German, the library weights German accuracy first, so Large v3 
 
 Settings, history, dictionary and snippets live in `%APPDATA%\com.remo.spechy`. API keys are stored in local settings and excluded from data exports. No keys are bundled with the app.
 
-Cloud transcription sends audio to the selected provider; cloud cleanup sends text. Release builds do not save raw microphone recordings. Update checks contact GitHub. Spechy does not provide or operate an inference backend.
+Cloud transcription sends audio to the selected provider; cloud cleanup sends text. Release builds only keep a recording when its transcription failed, so it can be retried from Home; it is deleted after a successful retry, on discard, or after 7 days. Update checks contact GitHub. Spechy does not provide or operate an inference backend.
 
 ## Updates
 

@@ -489,6 +489,10 @@ textarea.input { height: auto; padding: 10px 12px; resize: vertical; line-height
 .link-btn:hover { color: var(--text); }
 .hist-actions { display: flex; align-items: center; gap: 2px; flex: none; opacity: 0; transition: opacity 140ms var(--ease); }
 .hist-row:hover .hist-actions, .hist-actions:focus-within { opacity: 1; }
+.failed-row { align-items: center; }
+.failed-title { font-size: 15px; line-height: 1.45; }
+.failed-error { font-size: 13px; line-height: 1.45; margin-top: 2px; overflow-wrap: anywhere; }
+.failed-actions { display: flex; align-items: center; gap: 4px; flex: none; }
 .menu-anchor { position: relative; }
 .icon-btn.on { color: var(--text); }
 .load-more { display: flex; justify-content: center; padding: 8px 0 32px; }
