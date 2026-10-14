@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { isTauri } from "@tauri-apps/api/core";
-import { api, events, type DictationState, type Settings, type Toast } from "./lib/ipc";
+import { api, events, type DictationState, type InsertText, type Settings, type Toast } from "./lib/ipc";
+import { deliverDictation, trackFocusedField } from "./lib/insertText";
 import { StoreContext, type AppStore, type SettingsPatch } from "./lib/store";
 import { defaultSettings, MOCK, safe } from "./lib/fallback";
 import Sidebar from "./components/Sidebar";
@@ -150,6 +151,9 @@ export default function App() {
   useEvent<Toast>(events.onToast, toast);
   useEvent<string>(events.onNavigate, navigate);
   useEvent<DictationState>(events.onState, setState);
+  // Dictations aimed at this window arrive as text, not as a Ctrl+V (see lib/insertText.ts).
+  useEffect(() => trackFocusedField(), []);
+  useEvent<InsertText>(events.onInsertText, (p) => { void deliverDictation(p.text, toast); });
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {

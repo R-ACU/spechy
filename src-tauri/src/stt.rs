@@ -39,15 +39,30 @@ pub fn join_url(base: &str, path: &str) -> String {
     format!("{}/{}", base.trim().trim_end_matches('/'), path.trim_start_matches('/'))
 }
 
-/// Vocabulary joined into a Whisper prompt, capped so the prompt stays cheap.
-fn vocabulary_prompt(vocabulary: &[String]) -> String {
-    let mut out = String::new();
+/// Whisper reads at most 224 prompt tokens and silently drops the front of a
+/// longer prompt. 600 characters stay below that for German and English text.
+const PROMPT_MAX_CHARS: usize = 600;
+/// How much of the previous transcript is carried over as context.
+const CONTEXT_MAX_CHARS: usize = 200;
+
+/// Dictionary words, trimmed, without blanks and duplicates, in their order.
+fn clean_vocabulary(vocabulary: &[String]) -> Vec<&str> {
+    let mut out: Vec<&str> = Vec::new();
     for word in vocabulary {
         let word = word.trim();
-        if word.is_empty() {
+        if word.is_empty() || out.iter().any(|w| w.eq_ignore_ascii_case(word)) {
             continue;
         }
-        if out.len() + word.len() + 2 > 800 {
+        out.push(word);
+    }
+    out
+}
+
+/// Vocabulary joined into a plain list, capped at `max_chars`.
+fn vocabulary_list(vocabulary: &[String], max_chars: usize) -> String {
+    let mut out = String::new();
+    for word in clean_vocabulary(vocabulary) {
+        if out.chars().count() + word.chars().count() + 2 > max_chars {
             break;
         }
         if !out.is_empty() {
@@ -56,6 +71,68 @@ fn vocabulary_prompt(vocabulary: &[String]) -> String {
         out.push_str(word);
     }
     out
+}
+
+/// The end of the previous transcript, at most CONTEXT_MAX_CHARS long and
+/// starting on a word boundary.
+fn context_tail(context: Option<&str>) -> String {
+    let Some(context) = context else { return String::new() };
+    let context = context.split_whitespace().collect::<Vec<_>>().join(" ");
+    let count = context.chars().count();
+    if count <= CONTEXT_MAX_CHARS {
+        return context;
+    }
+    let tail: String = context.chars().skip(count - CONTEXT_MAX_CHARS).collect();
+    // Drop the word the cut landed in.
+    match tail.split_once(' ') {
+        Some((_, rest)) if !rest.is_empty() => rest.to_string(),
+        _ => tail,
+    }
+}
+
+/// Whisper treats the prompt as the text spoken right before the audio: it
+/// copies its language, spelling, casing and punctuation. A bare word list
+/// therefore teaches it to write bare word lists, so the vocabulary goes into a
+/// short natural sentence in the spoken language, and the end of the previous
+/// transcript (hands-free segments) follows it, closest to the new audio.
+fn whisper_prompt(language: Option<&str>, vocabulary: &[String], context: Option<&str>) -> String {
+    let german = language.map(|l| l.trim().to_ascii_lowercase().starts_with("de")).unwrap_or(false);
+    let (opening, last_joiner) = if german {
+        ("Hallo, heute geht es um ", " und ")
+    } else {
+        ("Hello, today we talk about ", " and ")
+    };
+    let context = context_tail(context);
+    let budget = PROMPT_MAX_CHARS
+        .saturating_sub(context.chars().count() + 1)
+        .saturating_sub(opening.chars().count() + last_joiner.chars().count() + 1);
+
+    let mut words: Vec<&str> = Vec::new();
+    let mut used = 0;
+    for word in clean_vocabulary(vocabulary) {
+        let cost = word.chars().count() + 2;
+        if used + cost > budget {
+            break;
+        }
+        used += cost;
+        words.push(word);
+    }
+
+    let mut sentence = String::new();
+    if let Some((last, rest)) = words.split_last() {
+        sentence.push_str(opening);
+        if !rest.is_empty() {
+            sentence.push_str(&rest.join(", "));
+            sentence.push_str(last_joiner);
+        }
+        sentence.push_str(last);
+        sentence.push('.');
+    }
+    match (sentence.is_empty(), context.is_empty()) {
+        (_, true) => sentence,
+        (true, false) => context,
+        (false, false) => format!("{sentence} {context}"),
+    }
 }
 
 /// Which provider handles this request.
@@ -100,39 +177,57 @@ fn pick_provider(p: &Providers) -> Result<&'static str, String> {
 }
 
 pub fn transcribe(providers: &Providers, req: SttRequest) -> Result<String, String> {
+    transcribe_with_context(providers, req, None)
+}
+
+/// Like `transcribe`, plus the text spoken right before this audio (the
+/// transcript of the previous hands-free segment or everything so far). Its
+/// last ~200 characters are handed to the model so a sentence that crosses a
+/// segment border keeps its casing, punctuation and spelling. `None` or an
+/// empty string behaves exactly like `transcribe`.
+pub fn transcribe_with_context(
+    providers: &Providers,
+    req: SttRequest,
+    context: Option<&str>,
+) -> Result<String, String> {
     if req.wav.len() < 1024 {
         return Ok(String::new());
     }
+    let context = context.map(str::trim).filter(|c| !c.is_empty());
+    // No level normalization here: an A/B test with speech at -24 dB gave the
+    // exact same Groq transcripts with and without an 8x lift.
     match pick_provider(providers)? {
         "groq" => match transcribe_openai_compatible(
             GROQ_BASE,
             &providers.groq_api_key,
             &providers.groq_model,
             &req,
+            context,
             "Groq",
         ) {
             // Groq's free tier allows about 20 requests per minute. When it pushes back,
             // fall back to OpenRouter for this request instead of losing the dictation.
             Err(message) if message.contains("rate limited") && !providers.openrouter_api_key.trim().is_empty() => {
                 log::warn!("groq rate limited, falling back to openrouter for this request");
-                transcribe_openrouter(providers, &req)
+                transcribe_openrouter(providers, &req, context)
             }
             other => other,
         },
         "custom" => {
             if providers.custom_stt_api == "whisper_cpp" {
-                transcribe_whisper_cpp(&providers.custom_stt_base_url, &req)
+                transcribe_whisper_cpp(&providers.custom_stt_base_url, &req, context)
             } else {
                 transcribe_openai_compatible(
                     &providers.custom_stt_base_url,
                     &providers.custom_stt_api_key,
                     &providers.custom_stt_model,
                     &req,
+                    context,
                     "Your server",
                 )
             }
         }
-        _ => transcribe_openrouter(providers, &req),
+        _ => transcribe_openrouter(providers, &req, context),
     }
 }
 
@@ -167,10 +262,11 @@ fn transcribe_openai_compatible(
     api_key: &str,
     model: &str,
     req: &SttRequest,
+    context: Option<&str>,
     label: &str,
 ) -> Result<String, String> {
     let boundary = format!("----spechy{}", crate::model::now_ms());
-    let prompt = vocabulary_prompt(req.vocabulary);
+    let prompt = whisper_prompt(req.language, req.vocabulary, context);
     let model = model.trim();
     let mut fields: Vec<(&str, &str)> = vec![
         ("model", model),
@@ -204,10 +300,10 @@ fn transcribe_openai_compatible(
 /// whisper.cpp is not OpenAI compatible: it serves `POST /inference` and answers
 /// with `{"text": ...}`. The model is the one the server was started with, so no
 /// model field is sent.
-fn transcribe_whisper_cpp(base_url: &str, req: &SttRequest) -> Result<String, String> {
+fn transcribe_whisper_cpp(base_url: &str, req: &SttRequest, context: Option<&str>) -> Result<String, String> {
     let label = "Your server";
     let boundary = format!("----spechy{}", crate::model::now_ms());
-    let prompt = vocabulary_prompt(req.vocabulary);
+    let prompt = whisper_prompt(req.language, req.vocabulary, context);
     let mut fields: Vec<(&str, &str)> = vec![("response_format", "json"), ("temperature", "0")];
     if let Some(language) = req.language {
         fields.push(("language", language));
@@ -230,19 +326,33 @@ fn transcribe_whisper_cpp(base_url: &str, req: &SttRequest) -> Result<String, St
 
 // ---------- OpenRouter ----------
 
-fn transcribe_openrouter(p: &Providers, req: &SttRequest) -> Result<String, String> {
-    let audio = base64::engine::general_purpose::STANDARD.encode(req.wav);
-    let mut instruction = String::from("Transcribe this audio verbatim.");
+/// The text instruction that goes next to the audio for a chat model.
+fn openrouter_instruction(req: &SttRequest, context: Option<&str>) -> String {
+    let mut instruction = String::from(
+        "Transcribe this audio verbatim, with normal capitalization and punctuation.",
+    );
     if let Some(language) = req.language {
         instruction.push_str(&format!(" The language is {language}. Transcribe in that language, never translate."));
     }
-    let vocabulary = vocabulary_prompt(req.vocabulary);
+    let vocabulary = vocabulary_list(req.vocabulary, PROMPT_MAX_CHARS);
     if !vocabulary.is_empty() {
-        instruction.push_str(&format!(" Expected terms: {vocabulary}."));
+        instruction.push_str(&format!(" Expected terms, spell them exactly like this: {vocabulary}."));
+    }
+    let context = context_tail(context);
+    if !context.is_empty() {
+        instruction.push_str(&format!(
+            " Previous text, only for context, do not repeat it: \"{context}\""
+        ));
     }
     if req.partial {
         instruction.push_str(" The recording may end mid sentence, transcribe what is there.");
     }
+    instruction
+}
+
+fn transcribe_openrouter(p: &Providers, req: &SttRequest, context: Option<&str>) -> Result<String, String> {
+    let audio = base64::engine::general_purpose::STANDARD.encode(req.wav);
+    let instruction = openrouter_instruction(req, context);
 
     let payload = serde_json::json!({
         "model": p.openrouter_stt_model,
@@ -484,12 +594,76 @@ pub fn list_models(provider: &str, refresh: bool) -> Result<Vec<ModelInfo>, Stri
 mod tests {
     use super::*;
 
+    fn words(list: &[&str]) -> Vec<String> {
+        list.iter().map(|w| w.to_string()).collect()
+    }
+
     #[test]
-    fn vocabulary_prompt_joins_and_caps() {
-        let words: Vec<String> = vec!["Spechy".into(), "".into(), "AI-OS".into()];
-        assert_eq!(vocabulary_prompt(&words), "Spechy, AI-OS");
+    fn vocabulary_list_joins_dedupes_and_caps() {
+        let list = words(&["Spechy", "", "AI-OS", " spechy "]);
+        assert_eq!(vocabulary_list(&list, PROMPT_MAX_CHARS), "Spechy, AI-OS");
         let many: Vec<String> = (0..500).map(|i| format!("word{i}")).collect();
-        assert!(vocabulary_prompt(&many).len() <= 800);
+        assert!(vocabulary_list(&many, PROMPT_MAX_CHARS).chars().count() <= PROMPT_MAX_CHARS);
+    }
+
+    #[test]
+    fn whisper_prompt_is_a_sentence_in_the_spoken_language() {
+        let list = words(&["Spechy", "AI-OS", "Groq"]);
+        assert_eq!(
+            whisper_prompt(Some("de"), &list, None),
+            "Hallo, heute geht es um Spechy, AI-OS und Groq."
+        );
+        assert_eq!(
+            whisper_prompt(Some("en"), &list, None),
+            "Hello, today we talk about Spechy, AI-OS and Groq."
+        );
+        assert_eq!(
+            whisper_prompt(None, &words(&["Tauri"]), None),
+            "Hello, today we talk about Tauri."
+        );
+        // Nothing to say: no prompt at all, so the model is not nudged.
+        assert_eq!(whisper_prompt(Some("de"), &[], None), "");
+        assert_eq!(whisper_prompt(Some("de"), &[], Some("   ")), "");
+    }
+
+    #[test]
+    fn whisper_prompt_appends_the_tail_of_the_previous_text() {
+        let list = words(&["Spechy"]);
+        assert_eq!(
+            whisper_prompt(Some("de"), &list, Some("Das war der erste Teil.")),
+            "Hallo, heute geht es um Spechy. Das war der erste Teil."
+        );
+        assert_eq!(whisper_prompt(Some("de"), &[], Some("Nur Kontext.")), "Nur Kontext.");
+
+        let long = "eins zwei drei vier fünf ".repeat(40);
+        let prompt = whisper_prompt(Some("de"), &list, Some(&long));
+        let tail = prompt.strip_prefix("Hallo, heute geht es um Spechy. ").unwrap();
+        assert!(tail.chars().count() <= CONTEXT_MAX_CHARS);
+        assert!(long.trim_end().ends_with(tail));
+        // The cut never lands inside a word.
+        assert!(["eins", "zwei", "drei", "vier", "fünf"].iter().any(|w| tail.starts_with(w)));
+    }
+
+    #[test]
+    fn whisper_prompt_stays_under_the_token_limit() {
+        let many: Vec<String> = (0..500).map(|i| format!("Fachwort{i}")).collect();
+        let context = "ä".repeat(1000);
+        for ctx in [None, Some(context.as_str())] {
+            let prompt = whisper_prompt(Some("de"), &many, ctx);
+            assert!(prompt.chars().count() <= PROMPT_MAX_CHARS, "{}", prompt.chars().count());
+            assert!(prompt.starts_with("Hallo, heute geht es um Fachwort0, "));
+        }
+    }
+
+    #[test]
+    fn openrouter_instruction_carries_terms_and_context() {
+        let list = words(&["Spechy"]);
+        let req = SttRequest { wav: &[], language: Some("de"), vocabulary: &list, partial: false };
+        let text = openrouter_instruction(&req, Some("Vorher gesagt."));
+        assert!(text.contains("The language is de."));
+        assert!(text.contains("spell them exactly like this: Spechy."));
+        assert!(text.contains("Previous text, only for context, do not repeat it: \"Vorher gesagt.\""));
+        assert!(!openrouter_instruction(&req, None).contains("Previous text"));
     }
 
     #[test]

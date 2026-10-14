@@ -112,6 +112,27 @@ pub fn focus_hwnd(hwnd: isize) {
 #[cfg(not(windows))]
 pub fn focus_hwnd(_hwnd: isize) {}
 
+/// The window belongs to Spechy itself (main window or pill).
+#[cfg(windows)]
+pub fn is_own_process_window(hwnd: isize) -> bool {
+    use windows::Win32::Foundation::HWND;
+    use windows::Win32::System::Threading::GetCurrentProcessId;
+    use windows::Win32::UI::WindowsAndMessaging::GetWindowThreadProcessId;
+    if hwnd == 0 {
+        return false;
+    }
+    let mut pid: u32 = 0;
+    unsafe {
+        GetWindowThreadProcessId(HWND(hwnd as *mut core::ffi::c_void), Some(&mut pid));
+        pid != 0 && pid == GetCurrentProcessId()
+    }
+}
+
+#[cfg(not(windows))]
+pub fn is_own_process_window(_hwnd: isize) -> bool {
+    false
+}
+
 /// Rough bucket for the statistics view.
 pub fn app_category(process_name: &str, title: &str) -> &'static str {
     let process = process_name.to_lowercase();

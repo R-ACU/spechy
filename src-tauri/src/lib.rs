@@ -25,10 +25,7 @@ pub mod updates;
 use tauri::{Manager, WindowEvent};
 
 pub fn run() {
-    if std::env::var("RUST_LOG").is_err() {
-        std::env::set_var("RUST_LOG", "info");
-    }
-    env_logger::init();
+    init_logging();
 
     let settings = settings::load();
     if let Err(e) = db::init() {
@@ -117,11 +114,15 @@ pub fn run() {
             }
             Ok(())
         })
-        .on_window_event(|window, event| {
-            if let WindowEvent::CloseRequested { api, .. } = event {
+        .on_window_event(|window, event| match event {
+            WindowEvent::CloseRequested { api, .. } => {
                 api.prevent_close();
                 let _ = window.destroy();
             }
+            // A window closed while a shortcut was being recorded never sends
+            // the "resume" call: the hotkeys must not stay paused behind it.
+            WindowEvent::Destroyed => hotkey::set_suspended(false),
+            _ => {}
         })
         .build(tauri::generate_context!())
         .expect("Spechy could not start")
@@ -137,4 +138,20 @@ pub fn run() {
                 _ => {}
             }
         });
+}
+
+/// Log to `spechy.log` in the data folder. A release build has no console, so
+/// without the file every hotkey and dictation error vanished unseen. The file
+/// holds events and errors only, never dictated text, and starts over past 1 MB.
+fn init_logging() {
+    let mut builder = env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info"));
+    builder.format_timestamp_millis();
+    let path = settings::data_dir().join("spechy.log");
+    if std::fs::metadata(&path).map(|m| m.len() > 1_000_000).unwrap_or(false) {
+        let _ = std::fs::rename(&path, settings::data_dir().join("spechy.old.log"));
+    }
+    if let Ok(file) = std::fs::OpenOptions::new().create(true).append(true).open(&path) {
+        builder.target(env_logger::Target::Pipe(Box::new(file)));
+    }
+    let _ = builder.try_init();
 }

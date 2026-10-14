@@ -26,6 +26,7 @@ pub fn set_settings(app: tauri::AppHandle, settings: Settings) -> Result<Setting
         ("Push to talk", &settings.hotkeys.push_to_talk),
         ("Hands free", &settings.hotkeys.hands_free),
         ("Command", &settings.hotkeys.command),
+        ("Prompt forge", &settings.hotkeys.prompt),
         ("Paste last dictation", &settings.hotkeys.paste_last),
     ] {
         crate::hotkey::parse_chord(chord)
@@ -35,7 +36,7 @@ pub fn set_settings(app: tauri::AppHandle, settings: Settings) -> Result<Setting
     if !paste.iter().any(|key| !matches!(*key, 0x10 | 0x11 | 0x12 | 0x5B)) {
         return Err("Paste last dictation needs a letter, number or function key.".into());
     }
-    for chord in [&settings.hotkeys.push_to_talk, &settings.hotkeys.hands_free, &settings.hotkeys.command] {
+    for chord in [&settings.hotkeys.push_to_talk, &settings.hotkeys.hands_free, &settings.hotkeys.command, &settings.hotkeys.prompt] {
         let other = crate::hotkey::parse_chord(chord)?;
         if other.iter().all(|key| paste.contains(key)) || paste.iter().all(|key| other.contains(key)) {
             return Err("Paste last dictation must not overlap another shortcut.".into());
@@ -261,6 +262,7 @@ pub fn repolish_history(id: String) -> Result<HistoryEntry, String> {
         app: &app,
         vibe: false,
         command_instruction: None,
+        prompt_mode: entry.mode == crate::model::DictationMode::Prompt,
         selection: None,
     })?;
     crate::db::update_history_text(&id, &result.text)?;

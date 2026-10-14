@@ -54,6 +54,10 @@ export default function Help() {
             <Chord chord={settings.hotkeys.command} />
             <p className="muted">Command mode: select text first, then speak an instruction such as make this shorter.</p>
           </div>
+          <div className="help-row">
+            <Chord chord={settings.hotkeys.prompt} />
+            <p className="muted">Prompt forge: hold and speak freely. Spechy shapes it into a structured prompt for AI chats.</p>
+          </div>
           <p className="muted">Press Escape while recording to cancel without inserting anything.</p>
           <div className="help-row">
             <Chord chord={settings.hotkeys.pasteLast} />

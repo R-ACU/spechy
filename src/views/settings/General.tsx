@@ -112,6 +112,7 @@ export default function General() {
           <ChordRecorder label="Push to talk" value={editHotkeys.pushToTalk} onChange={(v) => setEditHotkeys({ ...editHotkeys, pushToTalk: v })} />
           <ChordRecorder label="Hands-free toggle" value={editHotkeys.handsFree} onChange={(v) => setEditHotkeys({ ...editHotkeys, handsFree: v })} />
           <ChordRecorder label="Command mode" value={editHotkeys.command} onChange={(v) => setEditHotkeys({ ...editHotkeys, command: v })} />
+          <ChordRecorder label="Prompt forge" value={editHotkeys.prompt} onChange={(v) => setEditHotkeys({ ...editHotkeys, prompt: v })} />
           <ChordRecorder label="Paste last dictation" value={editHotkeys.pasteLast} onChange={(v) => setEditHotkeys({ ...editHotkeys, pasteLast: v })} />
           <div className="dialog-actions">
             <Button variant="ghost" onClick={() => setEditHotkeys(null)}>Cancel</Button>

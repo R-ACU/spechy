@@ -13,6 +13,7 @@ pub const EV_NAVIGATE: &str = "spechy://navigate"; // payload: String (view id, 
 pub const EV_MIC_LEVEL: &str = "spechy://mic-level"; // payload: f32 (0.0..1.0, microphone preview only)
 pub const EV_SCRATCHPAD: &str = "spechy://scratchpad"; // payload: String (full scratchpad text after a dictation landed there)
 pub const EV_FAILED_CHANGED: &str = "spechy://failed-changed"; // payload: Vec<FailedDictation>, newest first
+pub const EV_INSERT_TEXT: &str = "spechy://insert-text"; // payload: { text: String }, a dictation for a text field in Spechy's own window
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
@@ -37,6 +38,8 @@ pub enum DictationMode {
     PushToTalk,
     HandsFree,
     Command,
+    /// The dictation becomes a structured prompt for an AI assistant.
+    Prompt,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -75,6 +78,8 @@ pub struct Hotkeys {
     pub push_to_talk: String,
     pub hands_free: String,
     pub command: String,
+    /// Held like command mode: the dictation is shaped into a prompt.
+    pub prompt: String,
     pub paste_last: String,
 }
 impl Default for Hotkeys {
@@ -83,6 +88,7 @@ impl Default for Hotkeys {
             push_to_talk: "Ctrl+Win".into(),
             hands_free: "Ctrl+Win+Space".into(),
             command: "Ctrl+Win+Shift".into(),
+            prompt: "Ctrl+Win+Alt".into(),
             paste_last: "Shift+Alt+Z".into(),
         }
     }

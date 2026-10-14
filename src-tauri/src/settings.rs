@@ -82,6 +82,7 @@ pub fn apply_side_effects(s: &Settings) {
         push_to_talk: s.hotkeys.push_to_talk.clone(),
         hands_free: s.hotkeys.hands_free.clone(),
         command: s.hotkeys.command.clone(),
+        prompt: s.hotkeys.prompt.clone(),
         paste_last: s.hotkeys.paste_last.clone(),
     });
     crate::pill::set_always_visible(s.show_pill_always);

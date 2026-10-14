@@ -15,6 +15,8 @@ pub struct PolishContext<'a> {
     pub app: &'a ForegroundApp,
     /// Coding or terminal context: keep technical tokens verbatim.
     pub vibe: bool,
+    /// Prompt mode: shape the dictation into a structured prompt.
+    pub prompt_mode: bool,
     /// Command mode: apply this spoken instruction to `selection`.
     pub command_instruction: Option<&'a str>,
     pub selection: Option<&'a str>,
@@ -245,6 +247,49 @@ pub fn build_system_prompt(ctx: &PolishContext) -> String {
     p
 }
 
+/// The system prompt for prompt mode: the dictation becomes a structured
+/// prompt for an AI assistant instead of cleaned prose.
+pub fn build_prompt_system_prompt(ctx: &PolishContext) -> String {
+    let mut p = String::new();
+    p.push_str("You are the prompt-writing engine of Spechy, a voice dictation app. ");
+    p.push_str("The user dictates rough thoughts and you turn them into a clear, structured prompt they can paste into an AI assistant.\n");
+    p.push_str("Rules:\n");
+    p.push_str("- Output only the prompt itself. Never answer the task, never add commentary, never wrap it in quotes.\n");
+    p.push_str("- Keep the language of the speaker. German stays German, English stays English.\n");
+    if let Some(language) = ctx.settings.spoken_language() {
+        p.push_str(&format!(
+            "- The speaker mainly speaks {language}. Write the prompt in {language}, keeping single foreign words as spoken.\n"
+        ));
+    }
+    p.push_str("- Write it as a direct request to the AI assistant, not as a note about the user.\n");
+    p.push_str("- Start with one clear sentence stating the task or goal.\n");
+    p.push_str("- A short dictation stays short: one to three sentences, no headings, no bullet points.\n");
+    p.push_str("- Then organize the rest: context, requirements, constraints and the desired output as short bullet points, only where the draft gives such material.\n");
+    p.push_str("- Fix punctuation, capitalization and obvious transcription errors. Remove filler words, repetitions and false starts.\n");
+    p.push_str("- Do not invent requirements or facts. Only organize and sharpen what the user said.\n");
+    p.push_str("- Keep file names, paths, commands, flags and code identifiers verbatim.\n");
+    if !ctx.app.process_name.is_empty() {
+        p.push_str(&format!(
+            "- The prompt is going into {} (window title: {}).\n",
+            ctx.app.process_name, ctx.app.title
+        ));
+    }
+    let words: Vec<&str> = ctx
+        .dictionary
+        .iter()
+        .map(|d| d.word.trim())
+        .filter(|w| !w.is_empty())
+        .take(120)
+        .collect();
+    if !words.is_empty() {
+        p.push_str(&format!(
+            "- Known vocabulary, spell these exactly and fix similar sounding words to them: {}\n",
+            words.join(", ")
+        ));
+    }
+    p
+}
+
 // ---------- OpenAI-compatible chat call ----------
 
 fn agent() -> ureq::Agent {
@@ -364,7 +409,15 @@ pub fn polish(ctx: PolishContext) -> Result<PolishResult, String> {
     let (after_snippets, used_snippets) = apply_snippets(ctx.raw, ctx.snippets);
     let (after_dict, mut used_dictionary, dictionary_fixes) = apply_dictionary(&after_snippets, ctx.dictionary);
 
-    let polish_possible = ctx.settings.providers.polish_enabled
+    // Prompt forge is the language model step itself: it runs even when the
+    // everyday cleanup is switched off, and says so when no model is set up
+    // instead of quietly pasting the raw transcript.
+    if ctx.prompt_mode && !after_dict.trim().is_empty() {
+        if let Err(missing) = polish_target(ctx.settings) {
+            return Err(format!("Prompt forge needs a cleanup model. {missing}"));
+        }
+    }
+    let polish_possible = (ctx.settings.providers.polish_enabled || ctx.prompt_mode)
         && polish_target(ctx.settings).is_ok()
         && !after_dict.trim().is_empty();
 
@@ -372,8 +425,8 @@ pub fn polish(ctx: PolishContext) -> Result<PolishResult, String> {
         return Ok(PolishResult { text: after_dict, dictionary_fixes, used_dictionary, used_snippets });
     }
 
-    // 3) LLM polish.
-    let system = build_system_prompt(&ctx);
+    // 3) LLM polish. Prompt mode swaps the cleanup prompt for the prompt writer.
+    let system = if ctx.prompt_mode { build_prompt_system_prompt(&ctx) } else { build_system_prompt(&ctx) };
     let polished = chat(ctx.settings, &system, &after_dict, 0.2)?;
 
     // 4) Dictionary again, in case the model reintroduced a misspelling.
@@ -435,6 +488,7 @@ mod tests {
             snippets,
             app,
             vibe: false,
+            prompt_mode: false,
             command_instruction: None,
             selection: None,
         }
@@ -594,5 +648,100 @@ mod tests {
         let transformed = apply_transform("Translate the text into German. Output only the translation.", "The red bicycle is outside.", &settings).unwrap();
         assert!(transformed.to_lowercase().contains("fahrrad"), "Translation not applied: {transformed}");
         println!("Transform: {transformed}");
+    }
+
+    /// A one-shot OpenAI-compatible chat server that answers `answer` and
+    /// reports whether it was asked at all.
+    fn fake_chat_server(answer: &'static str) -> (String, std::sync::mpsc::Receiver<String>) {
+        use std::io::{Read, Write};
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let address = listener.local_addr().unwrap();
+        let (seen_tx, seen_rx) = std::sync::mpsc::channel();
+        std::thread::spawn(move || {
+            // Only a chat request counts: a stray connection from another test
+            // running in parallel must neither be reported nor use up the server.
+            for stream in listener.incoming().take(8) {
+                let Ok(mut stream) = stream else { continue };
+                // A read timeout ends the loop even if the length check misses.
+                let _ = stream.set_read_timeout(Some(std::time::Duration::from_millis(500)));
+                let mut request = Vec::new();
+                let mut buffer = [0u8; 65536];
+                loop {
+                    let n = stream.read(&mut buffer).unwrap_or(0);
+                    request.extend_from_slice(&buffer[..n]);
+                    let text = String::from_utf8_lossy(&request).to_string();
+                    if let Some(split) = text.find("\r\n\r\n") {
+                        let length = text[..split]
+                            .lines()
+                            .find_map(|l| l.to_lowercase().strip_prefix("content-length:").map(|v| v.trim().parse::<usize>().unwrap_or(0)))
+                            .unwrap_or(0);
+                        if request.len() >= split + 4 + length {
+                            break;
+                        }
+                    }
+                    if n == 0 {
+                        break;
+                    }
+                }
+                let request = String::from_utf8_lossy(&request).to_string();
+                if !request.starts_with("POST ") || !request.contains("/chat/completions") {
+                    continue;
+                }
+                let _ = seen_tx.send(request);
+                let body = serde_json::json!({ "choices": [{ "message": { "content": answer } }] }).to_string();
+                let _ = write!(
+                    stream,
+                    "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                    body.len()
+                );
+                return;
+            }
+        });
+        (format!("http://{address}/v1"), seen_rx)
+    }
+
+    fn custom_polish_settings(base_url: &str) -> Settings {
+        let mut s = Settings::default();
+        s.providers.polish_provider = "custom".into();
+        s.providers.custom_polish_base_url = base_url.into();
+        s.providers.custom_polish_model = "test-model".into();
+        s.providers.polish_enabled = false;
+        s
+    }
+
+    #[test]
+    fn prompt_forge_runs_even_with_cleanup_switched_off() {
+        // Remo has the everyday cleanup off; Forge used to paste the raw text.
+        let (url, seen) = fake_chat_server("Schreibe eine Funktion, die X tut.");
+        let settings = custom_polish_settings(&url);
+        let app = ForegroundApp::default();
+        let mut ctx = ctx_for("aehm schreib mal ne funktion die x macht", &settings, &[], &[], &app);
+        ctx.prompt_mode = true;
+        let result = polish(ctx).unwrap();
+        assert_eq!(result.text, "Schreibe eine Funktion, die X tut.");
+        let request = seen.recv_timeout(std::time::Duration::from_secs(5)).unwrap();
+        assert!(request.contains("prompt-writing engine"), "the prompt writer system prompt was not sent");
+    }
+
+    #[test]
+    fn normal_dictation_with_cleanup_off_never_calls_the_model() {
+        let (url, seen) = fake_chat_server("SHOULD NOT APPEAR");
+        let settings = custom_polish_settings(&url);
+        let app = ForegroundApp::default();
+        let result = polish(ctx_for("ganz normaler text", &settings, &[], &[], &app)).unwrap();
+        assert_eq!(result.text, "ganz normaler text");
+        if let Ok(request) = seen.recv_timeout(std::time::Duration::from_millis(300)) {
+            panic!("the model was called although cleanup is off: {request}");
+        }
+    }
+
+    #[test]
+    fn prompt_forge_without_a_model_says_so() {
+        let settings = offline_settings();
+        let app = ForegroundApp::default();
+        let mut ctx = ctx_for("irgendwas", &settings, &[], &[], &app);
+        ctx.prompt_mode = true;
+        let error = polish(ctx).unwrap_err();
+        assert!(error.starts_with("Prompt forge needs a cleanup model."), "{error}");
     }
 }

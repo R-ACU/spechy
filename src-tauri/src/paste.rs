@@ -107,7 +107,7 @@ fn key_input(vk: u16, up: bool) -> windows::Win32::UI::Input::KeyboardAndMouse::
                     KEYBD_EVENT_FLAGS(0)
                 },
                 time: 0,
-                dwExtraInfo: 0,
+                dwExtraInfo: crate::hotkey::INJECT_TAG,
             },
         },
     }
@@ -130,7 +130,7 @@ fn unicode_input(unit: u16, up: bool) -> windows::Win32::UI::Input::KeyboardAndM
                     KEYEVENTF_UNICODE
                 },
                 time: 0,
-                dwExtraInfo: 0,
+                dwExtraInfo: crate::hotkey::INJECT_TAG,
             },
         },
     }

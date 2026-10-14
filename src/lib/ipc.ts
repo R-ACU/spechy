@@ -3,7 +3,7 @@ import { invoke, Channel } from "@tauri-apps/api/core";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 
 export type Phase = "idle" | "recording" | "transcribing" | "polishing" | "error";
-export type DictationMode = "push-to-talk" | "hands-free" | "command";
+export type DictationMode = "push-to-talk" | "hands-free" | "command" | "prompt";
 
 export interface DictationState {
   phase: Phase;
@@ -16,7 +16,7 @@ export interface DictationState {
 
 export interface Toast { kind: "info" | "error" | "success"; message: string }
 
-export interface Hotkeys { pushToTalk: string; handsFree: string; command: string; pasteLast: string }
+export interface Hotkeys { pushToTalk: string; handsFree: string; command: string; prompt: string; pasteLast: string }
 
 export type SttProvider = "auto" | "groq" | "openrouter" | "custom";
 export type PolishProvider = "openrouter" | "groq" | "custom";
@@ -251,6 +251,10 @@ export const api = {
 };
 
 // ---------- Events ----------
+/** Dictation whose target is Spechy's own window. Payload: InsertText. Mirrors EV_INSERT_TEXT in model.rs. */
+export const EV_INSERT_TEXT = "spechy://insert-text";
+export interface InsertText { text: string }
+
 export const events = {
   onState: (cb: (s: DictationState) => void): Promise<UnlistenFn> => listen<DictationState>("spechy://state", (e) => cb(e.payload)),
   onMicLevel: (cb: (level: number) => void): Promise<UnlistenFn> => listen<number>("spechy://mic-level", (e) => cb(e.payload)),
@@ -260,4 +264,5 @@ export const events = {
   onNavigate: (cb: (view: string) => void): Promise<UnlistenFn> => listen<string>("spechy://navigate", (e) => cb(e.payload)),
   onScratchpad: (cb: (text: string) => void): Promise<UnlistenFn> => listen<string>("spechy://scratchpad", (e) => cb(e.payload)),
   onFailedChanged: (cb: (list: FailedDictation[]) => void): Promise<UnlistenFn> => listen<FailedDictation[]>("spechy://failed-changed", (e) => cb(e.payload)),
+  onInsertText: (cb: (p: InsertText) => void): Promise<UnlistenFn> => listen<InsertText>(EV_INSERT_TEXT, (e) => cb(e.payload)),
 };

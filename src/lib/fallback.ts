@@ -24,7 +24,7 @@ export const defaultSettings: Settings = {
   dictationLanguages: ["en", "de"],
   primaryLanguage: "en",
   microphone: "",
-  hotkeys: { pushToTalk: "Ctrl+Win", handsFree: "Ctrl+Win+Space", command: "Ctrl+Alt", pasteLast: "Shift+Alt+Z" },
+  hotkeys: { pushToTalk: "Ctrl+Win", handsFree: "Ctrl+Win+Space", command: "Ctrl+Alt", prompt: "Ctrl+Win+Alt", pasteLast: "Shift+Alt+Z" },
   launchAtLogin: false,
   showPillAlways: false,
   pillScale: 70,

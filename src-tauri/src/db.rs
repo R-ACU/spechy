@@ -24,6 +24,7 @@ fn mode_to_str(mode: DictationMode) -> &'static str {
         DictationMode::PushToTalk => "push-to-talk",
         DictationMode::HandsFree => "hands-free",
         DictationMode::Command => "command",
+        DictationMode::Prompt => "prompt",
     }
 }
 
@@ -31,6 +32,7 @@ fn mode_from_str(s: &str) -> DictationMode {
     match s {
         "hands-free" => DictationMode::HandsFree,
         "command" => DictationMode::Command,
+        "prompt" => DictationMode::Prompt,
         _ => DictationMode::PushToTalk,
     }
 }

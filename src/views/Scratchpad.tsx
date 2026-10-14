@@ -14,10 +14,12 @@ export default function Scratchpad() {
   useEffect(() => {
     void safeCall(() => api.getScratchpad(), "scratchpad", "").then((t) => { if (!local.current) setText(t); });
     let off: (() => void) | undefined;
+    let dead = false;
     events.onScratchpad((t) => { local.current = false; setText(t); })
-      .then((fn) => { off = fn; })
+      .then((fn) => { if (dead) fn(); else off = fn; })
       .catch(() => {});
     return () => {
+      dead = true;
       off?.();
       if (timer.current) window.clearTimeout(timer.current);
     };
