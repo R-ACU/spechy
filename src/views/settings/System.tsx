@@ -60,6 +60,9 @@ export default function SystemSection() {
         <Row label="Dictation and notification sounds" sub="A short chime when recording starts and stops.">
           <Toggle on={settings.sounds} onChange={(v) => void update({ sounds: v })} />
         </Row>
+        <Row label="Mute music while dictating" sub="Silence other apps while you speak and bring them back when you stop.">
+          <Toggle on={settings.muteWhileDictating} onChange={(v) => void update({ muteWhileDictating: v })} />
+        </Row>
         <Row label="Live transcript in the pill" sub="Show the words while you speak instead of a plain waveform.">
           <Toggle on={settings.liveTranscript} onChange={(v) => void update({ liveTranscript: v })} />
         </Row>

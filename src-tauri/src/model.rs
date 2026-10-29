@@ -360,6 +360,8 @@ pub struct Settings {
     pub pill_scale: u32,
     pub dictation_reminder: bool,
     pub sounds: bool,
+    /// Mute other apps (music, videos) while the microphone records.
+    pub mute_while_dictating: bool,
     pub live_transcript: bool,
     /// Code mode in terminals/IDEs: technical terms, no prose reformatting.
     pub vibe_coding: bool,
@@ -386,6 +388,7 @@ impl Default for Settings {
             pill_scale: 70,
             dictation_reminder: true,
             sounds: true,
+            mute_while_dictating: false,
             live_transcript: true,
             vibe_coding: true,
             vibe_coding_apps: vec![],

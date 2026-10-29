@@ -131,6 +131,8 @@ export interface Settings {
   pillScale: number;
   dictationReminder: boolean;
   sounds: boolean;
+  /** Mute other apps (music, videos) while the microphone records. */
+  muteWhileDictating: boolean;
   liveTranscript: boolean;
   vibeCoding: boolean;
   vibeCodingApps: string[];

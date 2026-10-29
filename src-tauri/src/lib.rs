@@ -4,6 +4,7 @@ pub mod audio;
 pub mod autostart;
 pub mod commands;
 pub mod db;
+pub mod ducking;
 pub mod failed;
 pub mod hardware;
 pub mod hotkey;
@@ -134,6 +135,7 @@ pub fn run() {
                 // Never leave the local whisper.cpp server running behind the app.
                 tauri::RunEvent::Exit => {
                     crate::local_server::stop();
+                    crate::ducking::restore_blocking();
                 }
                 _ => {}
             }

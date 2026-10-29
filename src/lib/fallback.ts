@@ -30,6 +30,7 @@ export const defaultSettings: Settings = {
   pillScale: 70,
   dictationReminder: true,
   sounds: true,
+  muteWhileDictating: false,
   liveTranscript: true,
   vibeCoding: false,
   vibeCodingApps: [],

@@ -257,6 +257,8 @@ pub fn init(handle: AppHandle) {
     crate::pill::set_always_visible(settings.show_pill_always);
     // Prunes recordings past their retention.
     let _ = crate::failed::list();
+    // Unmutes apps a crashed run left muted.
+    crate::ducking::init();
 
     let config = crate::hotkey::HotkeyConfig {
         push_to_talk: settings.hotkeys.push_to_talk.clone(),
@@ -500,6 +502,7 @@ fn start_inner(mode: DictationMode) -> Result<(), String> {
     // to know that one is running.
     crate::hotkey::set_hands_free_running(mode == DictationMode::HandsFree);
     sound(SoundKind::Start);
+    crate::ducking::mute();
     crate::pill::set_state(PillState::Recording { level: 0.0, live_text: String::new() });
     emit_state(&state());
 
@@ -797,6 +800,7 @@ pub fn cancel() {
         s.recorder.take()
     };
     log::info!("dictation cancelled");
+    crate::ducking::restore();
     if let Some(r) = recorder {
         let _ = r.stop();
     }
@@ -855,6 +859,7 @@ fn show_error(message: &str, retry_id: Option<String>, generation: u64) {
         s.public = DictationState::default();
         s.public.clone()
     };
+    crate::ducking::restore();
     crate::hotkey::set_active(false);
     emit_state(&snapshot);
 }
@@ -894,6 +899,7 @@ pub fn stop() {
         }
     };
     crate::hotkey::set_active(false);
+    crate::ducking::restore();
     let Some(job) = job else {
         crate::pill::set_state(PillState::Done);
         emit_state(&state());

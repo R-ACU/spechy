@@ -1,6 +1,6 @@
 [package]
 name = "spechy"
-version = "0.1.9"
+version = "0.1.10"
 description = "Voice dictation for Windows: hold a key, speak, text lands where you type."
 authors = ["Remo"]
 edition = "2021"
@@ -47,6 +47,7 @@ windows = { version = "0.58", features = [
   "Win32_System_DataExchange",
   "Win32_System_Memory",
   "Win32_System_Ole",
+  "Win32_System_Com",
   "Win32_Media_Audio",
   "Win32_System_ProcessStatus",
   "Win32_System_SystemInformation",
