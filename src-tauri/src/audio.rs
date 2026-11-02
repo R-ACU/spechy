@@ -345,12 +345,16 @@ pub fn encode_wav(samples: &[i16]) -> Vec<u8> {
 
 // ------------------------------------------------------------------ capture
 
+fn device_name(device: &cpal::Device) -> Option<String> {
+    device.description().ok().map(|d| d.name().to_string())
+}
+
 fn pick_device(wanted: &str) -> Result<cpal::Device, String> {
     let host = cpal::default_host();
     if !wanted.is_empty() {
         if let Ok(devices) = host.input_devices() {
             for device in devices {
-                if device.name().map(|n| n == wanted).unwrap_or(false) {
+                if device_name(&device).as_deref() == Some(wanted) {
                     return Ok(device);
                 }
             }
@@ -360,26 +364,148 @@ fn pick_device(wanted: &str) -> Result<cpal::Device, String> {
         .ok_or_else(|| "No microphone found.".to_string())
 }
 
+/// Rank for fallback formats: float first, then the common integer widths.
+fn format_rank(format: cpal::SampleFormat) -> u8 {
+    use cpal::SampleFormat::*;
+    match format {
+        F32 => 0,
+        I16 => 1,
+        I24 => 2,
+        I32 => 3,
+        F64 => 4,
+        _ => 9,
+    }
+}
+
+/// Stream formats to try, best first: the device's own default (the Windows
+/// mix format), then every other format the driver reports as supported.
+/// Some devices reject their default format in shared mode with
+/// "invalid parameter" (0x80070057); one of the alternatives usually opens.
+fn candidate_configs(device: &cpal::Device) -> Vec<cpal::SupportedStreamConfig> {
+    let mut out: Vec<cpal::SupportedStreamConfig> = Vec::new();
+    match device.default_input_config() {
+        Ok(config) => out.push(config),
+        Err(error) => log::warn!("microphone default config unavailable: {error}"),
+    }
+    if let Ok(ranges) = device.supported_input_configs() {
+        let mut ranges: Vec<_> = ranges.collect();
+        ranges.sort_by_key(|range| (format_rank(range.sample_format()), range.channels()));
+        for range in ranges {
+            let rate = [48_000, 44_100, TARGET_RATE]
+                .into_iter()
+                .find(|rate| range.contains_rate(*rate))
+                .unwrap_or_else(|| range.max_sample_rate());
+            let config = range.with_sample_rate(rate);
+            let duplicate = out.iter().any(|known| {
+                known.sample_format() == config.sample_format()
+                    && known.channels() == config.channels()
+                    && known.sample_rate() == config.sample_rate()
+            });
+            if !duplicate {
+                out.push(config);
+            }
+        }
+    }
+    out
+}
+
 fn build_stream(
     wanted: &str,
     buffer: Arc<Mutex<Vec<i16>>>,
     peak: Arc<AtomicU32>,
     on_level: impl Fn(f32) + Send + 'static,
 ) -> Result<cpal::Stream, String> {
+    // Shared so every format attempt can get its own callback.
+    let on_level = Arc::new(Mutex::new(on_level));
     let device = pick_device(wanted)?;
-    let config = device
-        .default_input_config()
-        .map_err(|error| format!("Microphone config unavailable: {error}"))?;
-    let sample_format = config.sample_format();
-    let stream_config: cpal::StreamConfig = config.into();
+    match open_device(&device, &buffer, &peak, &on_level) {
+        Ok(stream) => Ok(stream),
+        Err(error) => {
+            // A chosen microphone that will not open: fall back to the system default.
+            let default = cpal::default_host().default_input_device();
+            match default {
+                Some(default) if default != device => {
+                    log::warn!("chosen microphone failed ({error}), trying the system default");
+                    open_device(&default, &buffer, &peak, &on_level).map_err(|_| error)
+                }
+                _ => Err(error),
+            }
+        }
+    }
+}
 
+fn open_device<L: Fn(f32) + Send + 'static>(
+    device: &cpal::Device,
+    buffer: &Arc<Mutex<Vec<i16>>>,
+    peak: &Arc<AtomicU32>,
+    on_level: &Arc<Mutex<L>>,
+) -> Result<cpal::Stream, String> {
+    let candidates = candidate_configs(device);
+    if candidates.is_empty() {
+        return Err("Microphone config unavailable.".to_string());
+    }
+    let mut first_error: Option<String> = None;
+    for (index, config) in candidates.iter().enumerate() {
+        let sample_format = config.sample_format();
+        let stream_config: cpal::StreamConfig = config.config();
+        let result = run_format(
+            sample_format,
+            device,
+            stream_config,
+            Arc::clone(buffer),
+            Arc::clone(peak),
+            {
+                let on_level = Arc::clone(on_level);
+                move |level: f32| {
+                    if let Ok(callback) = on_level.lock() {
+                        callback(level);
+                    }
+                }
+            },
+        );
+        match result {
+            Ok(stream) => {
+                if index > 0 {
+                    log::info!(
+                        "microphone opened with fallback format {sample_format} {} ch {} Hz",
+                        stream_config.channels,
+                        stream_config.sample_rate
+                    );
+                }
+                return Ok(stream);
+            }
+            Err(error) => {
+                log::warn!(
+                    "microphone format {sample_format} {} ch {} Hz failed: {error}",
+                    stream_config.channels,
+                    stream_config.sample_rate
+                );
+                first_error.get_or_insert(error);
+            }
+        }
+    }
+    Err(first_error.unwrap_or_else(|| "Could not open the microphone.".to_string()))
+}
+
+fn run_format(
+    sample_format: cpal::SampleFormat,
+    device: &cpal::Device,
+    config: cpal::StreamConfig,
+    buffer: Arc<Mutex<Vec<i16>>>,
+    peak: Arc<AtomicU32>,
+    on_level: impl Fn(f32) + Send + 'static,
+) -> Result<cpal::Stream, String> {
+    use cpal::SampleFormat as F;
     match sample_format {
-        cpal::SampleFormat::F32 => run::<f32>(&device, &stream_config, buffer, peak, on_level),
-        cpal::SampleFormat::I16 => run::<i16>(&device, &stream_config, buffer, peak, on_level),
-        cpal::SampleFormat::U16 => run::<u16>(&device, &stream_config, buffer, peak, on_level),
-        cpal::SampleFormat::I32 => run::<i32>(&device, &stream_config, buffer, peak, on_level),
-        cpal::SampleFormat::I8 => run::<i8>(&device, &stream_config, buffer, peak, on_level),
-        cpal::SampleFormat::U8 => run::<u8>(&device, &stream_config, buffer, peak, on_level),
+        F::F32 => run::<f32>(device, config, buffer, peak, on_level),
+        F::F64 => run::<f64>(device, config, buffer, peak, on_level),
+        F::I16 => run::<i16>(device, config, buffer, peak, on_level),
+        F::U16 => run::<u16>(device, config, buffer, peak, on_level),
+        F::I24 => run::<cpal::I24>(device, config, buffer, peak, on_level),
+        F::I32 => run::<i32>(device, config, buffer, peak, on_level),
+        F::U32 => run::<u32>(device, config, buffer, peak, on_level),
+        F::I8 => run::<i8>(device, config, buffer, peak, on_level),
+        F::U8 => run::<u8>(device, config, buffer, peak, on_level),
         other => Err(format!("Unsupported microphone sample format: {other}")),
     }
 }
@@ -392,7 +518,7 @@ fn level_from_rms(rms: f32) -> f32 {
 
 fn run<T>(
     device: &cpal::Device,
-    config: &cpal::StreamConfig,
+    config: cpal::StreamConfig,
     buffer: Arc<Mutex<Vec<i16>>>,
     peak: Arc<AtomicU32>,
     on_level: impl Fn(f32) + Send + 'static,
@@ -402,7 +528,7 @@ where
     f32: FromSample<T>,
 {
     let channels = config.channels.max(1) as usize;
-    let source_rate = config.sample_rate.0.max(1) as f64;
+    let source_rate = config.sample_rate.max(1) as f64;
     let ratio = source_rate / TARGET_RATE as f64;
 
     // Resampler state, kept across callbacks.
@@ -474,13 +600,13 @@ pub fn list_devices() -> Vec<MicDevice> {
     let host = cpal::default_host();
     let default_name = host
         .default_input_device()
-        .and_then(|device| device.name().ok())
+        .and_then(|device| device_name(&device))
         .unwrap_or_default();
 
     let mut out = Vec::new();
     if let Ok(devices) = host.input_devices() {
         for device in devices {
-            if let Ok(name) = device.name() {
+            if let Some(name) = device_name(&device) {
                 let is_default = name == default_name;
                 if !out.iter().any(|d: &MicDevice| d.name == name) {
                     out.push(MicDevice { name, is_default });
