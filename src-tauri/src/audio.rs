@@ -382,16 +382,29 @@ fn format_rank(format: cpal::SampleFormat) -> u8 {
     }
 }
 
-/// Stream formats to try, best first: the device's own default (the Windows
-/// mix format), then every other format the driver reports as supported.
-/// Some devices reject their default format in shared mode with
-/// "invalid parameter" (0x80070057); one of the alternatives usually opens.
-fn candidate_configs(device: &cpal::Device) -> Vec<cpal::SupportedStreamConfig> {
-    let mut out: Vec<cpal::SupportedStreamConfig> = Vec::new();
+/// The format tried first: the device's own default (the Windows mix format).
+fn default_candidate(device: &cpal::Device) -> Option<cpal::SupportedStreamConfig> {
     match device.default_input_config() {
-        Ok(config) => out.push(config),
-        Err(error) => log::warn!("microphone default config unavailable: {error}"),
+        Ok(config) => Some(config),
+        Err(error) => {
+            log::warn!("microphone default config unavailable: {error}");
+            None
+        }
     }
+}
+
+/// Every other format the driver reports as supported, best first. Some
+/// devices reject their default format in shared mode with "invalid parameter"
+/// (0x80070057); one of these usually opens.
+///
+/// Only ask for this after the default format failed: the query probes the
+/// driver format by format and can take several seconds, which would sit
+/// between the hotkey and the start of every single dictation.
+fn fallback_candidates(
+    device: &cpal::Device,
+    tried: Option<&cpal::SupportedStreamConfig>,
+) -> Vec<cpal::SupportedStreamConfig> {
+    let mut out: Vec<cpal::SupportedStreamConfig> = Vec::new();
     if let Ok(ranges) = device.supported_input_configs() {
         let mut ranges: Vec<_> = ranges.collect();
         ranges.sort_by_key(|range| (format_rank(range.sample_format()), range.channels()));
@@ -401,7 +414,7 @@ fn candidate_configs(device: &cpal::Device) -> Vec<cpal::SupportedStreamConfig> 
                 .find(|rate| range.contains_rate(*rate))
                 .unwrap_or_else(|| range.max_sample_rate());
             let config = range.with_sample_rate(rate);
-            let duplicate = out.iter().any(|known| {
+            let duplicate = tried.into_iter().chain(out.iter()).any(|known| {
                 known.sample_format() == config.sample_format()
                     && known.channels() == config.channels()
                     && known.sample_rate() == config.sample_rate()
@@ -445,18 +458,11 @@ fn open_device<L: Fn(f32) + Send + 'static>(
     peak: &Arc<AtomicU32>,
     on_level: &Arc<Mutex<L>>,
 ) -> Result<cpal::Stream, String> {
-    let candidates = candidate_configs(device);
-    if candidates.is_empty() {
-        return Err("Microphone config unavailable.".to_string());
-    }
-    let mut first_error: Option<String> = None;
-    for (index, config) in candidates.iter().enumerate() {
-        let sample_format = config.sample_format();
-        let stream_config: cpal::StreamConfig = config.config();
-        let result = run_format(
-            sample_format,
+    let try_config = |config: &cpal::SupportedStreamConfig| {
+        run_format(
+            config.sample_format(),
             device,
-            stream_config,
+            config.config(),
             Arc::clone(buffer),
             Arc::clone(peak),
             {
@@ -467,24 +473,38 @@ fn open_device<L: Fn(f32) + Send + 'static>(
                     }
                 }
             },
-        );
-        match result {
+        )
+    };
+    let describe = |config: &cpal::SupportedStreamConfig| {
+        format!("{} {} ch {} Hz", config.sample_format(), config.channels(), config.sample_rate())
+    };
+
+    // The normal case: the default format opens, and nothing else is asked of
+    // the driver.
+    let default = default_candidate(device);
+    let mut first_error: Option<String> = None;
+    if let Some(config) = &default {
+        match try_config(config) {
+            Ok(stream) => return Ok(stream),
+            Err(error) => {
+                log::warn!("microphone format {} failed: {error}", describe(config));
+                first_error = Some(error);
+            }
+        }
+    }
+
+    let fallbacks = fallback_candidates(device, default.as_ref());
+    if default.is_none() && fallbacks.is_empty() {
+        return Err("Microphone config unavailable.".to_string());
+    }
+    for config in &fallbacks {
+        match try_config(config) {
             Ok(stream) => {
-                if index > 0 {
-                    log::info!(
-                        "microphone opened with fallback format {sample_format} {} ch {} Hz",
-                        stream_config.channels,
-                        stream_config.sample_rate
-                    );
-                }
+                log::info!("microphone opened with fallback format {}", describe(config));
                 return Ok(stream);
             }
             Err(error) => {
-                log::warn!(
-                    "microphone format {sample_format} {} ch {} Hz failed: {error}",
-                    stream_config.channels,
-                    stream_config.sample_rate
-                );
+                log::warn!("microphone format {} failed: {error}", describe(config));
                 first_error.get_or_insert(error);
             }
         }
