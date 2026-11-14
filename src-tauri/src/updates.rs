@@ -1,4 +1,5 @@
 //! Public release discovery and verified in-app installer downloads.
+#![cfg_attr(target_os = "linux", allow(dead_code, unreachable_code, unused_variables))]
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::{io::{Read, Write}, path::{Path, PathBuf}, sync::Mutex};
@@ -119,6 +120,8 @@ fn download_inner(current: &str, cache: &Path, progress: impl Fn(Progress)) -> R
 }
 
 pub fn install() -> Result<(), String> {
+    #[cfg(not(windows))]
+    return Err("Updates on Linux come from a new source build.".into());
     let ready = READY.lock().map_err(|e| e.to_string())?;
     let (path, expected) = ready.as_ref().ok_or("Download the update first.")?;
     verify(path, expected)?;
@@ -161,6 +164,15 @@ fn version_parts(version: &str) -> Result<[u64; 3], String> {
 }
 
 pub fn check(current: &str) -> Result<UpdateInfo, String> {
+    // The releases carry a Windows installer only; Linux builds come from source.
+    #[cfg(not(windows))]
+    return Ok(UpdateInfo { available: false, version: current.trim_start_matches('v').into(), download_url: String::new() });
+    #[cfg(windows)]
+    check_windows(current)
+}
+
+#[cfg(windows)]
+fn check_windows(current: &str) -> Result<UpdateInfo, String> {
     let release: Release = ureq::get("https://api.github.com/repos/R-ACU/spechy-releases/releases/latest")
         .set("User-Agent", "Spechy")
         .set("Accept", "application/vnd.github+json")

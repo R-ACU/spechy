@@ -1887,6 +1887,1182 @@ mod win {
     }
 }
 
+// ------------------------------------------------------------------ Linux
+
+/// Linux (Wayland first, Hyprland in mind): a GTK3 window turned into a
+/// wlr-layer-shell surface on the overlay layer, anchored bottom center, never
+/// taking keyboard focus. The pixels come from the same Canvas rasterizer as on
+/// Windows, copied into a cairo ARGB32 image (same premultiplied BGRA byte
+/// order on little endian); text is laid out with pango. Without layer-shell
+/// support it falls back to an undecorated, non-focusable keep-above window.
+/// Everything here runs on the GTK main thread; other threads only touch the
+/// shared state cell and schedule `apply_state` through the main context.
+#[cfg(target_os = "linux")]
+mod linux {
+    use super::*;
+    use gtk::prelude::*;
+    use gtk::{cairo, gdk, glib, pango};
+    use gtk_layer_shell::LayerShell;
+    use std::cell::RefCell;
+    use std::time::Duration;
+
+    const DONE_VISIBLE_MS: u64 = 600;
+    /// Animation tick while something moves.
+    const FRAME_MS: u64 = 16;
+    /// Same text opacity as on Windows.
+    const TEXT_ALPHA: f32 = 0.92;
+    /// Fontconfig resolves this to the system UI sans (Segoe UI on Windows).
+    const FONT_FAMILY: &str = "Sans";
+
+    // The safe binding for this needs the crate feature `v0_5`; the symbol is in
+    // every gtk-layer-shell >= 0.5, which gtk-layer-shell-sys already links.
+    extern "C" {
+        fn gtk_layer_is_supported() -> std::os::raw::c_int;
+    }
+
+    struct Surface {
+        window: gtk::Window,
+        /// True when the window is a layer-shell surface.
+        layer: bool,
+        /// The frame shown by the draw handler, in physical pixels.
+        frame: Option<cairo::ImageSurface>,
+        width: i32,
+        height: i32,
+        /// Shadow, glass, rim and the baked text; everything but the moving parts.
+        base: Vec<u8>,
+        base_key: Option<CacheKey>,
+        measure_key: Option<(String, u32, bool)>,
+        measure: (f32, f32),
+        /// Last logical window size, bottom margin and input rectangle applied.
+        window_size: (i32, i32),
+        margin: i32,
+        input_rect: Option<(i32, i32, i32, i32)>,
+        retry_cursor: Option<bool>,
+    }
+
+    #[derive(PartialEq, Clone)]
+    struct CacheKey {
+        width: i32,
+        height: i32,
+        kind: u8,
+        scale_bits: u32,
+        text: String,
+    }
+
+    #[derive(Clone, Copy, PartialEq, Eq)]
+    enum Motion {
+        None,
+        Show,
+        Hide,
+        Resize,
+    }
+
+    /// Same transition bookkeeping as the Win32 pill.
+    struct Anim {
+        motion: Motion,
+        start: std::time::Instant,
+        from_shape: (f32, f32, f32, f32),
+        visible_state: PillState,
+        visible: bool,
+        last_shape: Option<(f32, f32, f32, f32)>,
+        last_scale_bits: u32,
+    }
+
+    impl Anim {
+        fn new() -> Anim {
+            Anim {
+                motion: Motion::None,
+                start: std::time::Instant::now(),
+                from_shape: (0.0, 0.0, 0.0, 0.0),
+                visible_state: PillState::Hidden,
+                visible: false,
+                last_shape: None,
+                last_scale_bits: 0,
+            }
+        }
+
+        fn progress(&self) -> f32 {
+            let span = match self.motion {
+                Motion::Show => SHOW_MS,
+                Motion::Hide => HIDE_MS,
+                Motion::Resize => RESIZE_MS,
+                Motion::None => return 1.0,
+            };
+            (self.start.elapsed().as_secs_f32() * 1000.0 / span).clamp(0.0, 1.0)
+        }
+
+        fn begin(&mut self, motion: Motion, already_done: f32) {
+            let span = match motion {
+                Motion::Show => SHOW_MS,
+                Motion::Hide => HIDE_MS,
+                Motion::Resize => RESIZE_MS,
+                Motion::None => 0.0,
+            };
+            let back = Duration::from_secs_f32(already_done * span / 1000.0);
+            self.motion = motion;
+            self.start = std::time::Instant::now()
+                .checked_sub(back)
+                .unwrap_or_else(std::time::Instant::now);
+        }
+    }
+
+    thread_local! {
+        static SURFACE: RefCell<Option<Surface>> = const { RefCell::new(None) };
+        static ANIM: RefCell<Anim> = RefCell::new(Anim::new());
+        static TICK: RefCell<Option<glib::SourceId>> = const { RefCell::new(None) };
+        static HIDE_TIMER: RefCell<Option<glib::SourceId>> = const { RefCell::new(None) };
+    }
+
+    pub fn start(
+        cancel: Box<dyn Fn() + Send>,
+        confirm: Box<dyn Fn() + Send>,
+    ) -> Result<(), String> {
+        let _ = CALLBACKS.set(Mutex::new(Callbacks { cancel, confirm }));
+        if gtk::is_initialized_main_thread() {
+            create_window()
+        } else if gtk::is_initialized() {
+            glib::idle_add_once(|| {
+                if let Err(error) = create_window() {
+                    log::error!("the pill window could not be created: {error}");
+                }
+            });
+            Ok(())
+        } else {
+            Err("GTK is not initialized; the pill needs the GTK main loop.".to_string())
+        }
+    }
+
+    /// Schedules a state update on the GTK main thread. Never runs inline, so
+    /// a caller on the main thread cannot re-enter a running render.
+    pub fn notify() {
+        if STARTED.load(Ordering::SeqCst) {
+            glib::idle_add_once(apply_state);
+        }
+    }
+
+    fn layer_shell_supported() -> bool {
+        unsafe { gtk_layer_is_supported() != 0 }
+    }
+
+    pub(super) fn create_window() -> Result<(), String> {
+        if SURFACE.with(|cell| cell.borrow().is_some()) {
+            return Ok(());
+        }
+        let display = gdk::Display::default().ok_or("No display for the pill window")?;
+        let layer = layer_shell_supported();
+        let x11 = display.type_().name().contains("X11");
+        // On X11 an override-redirect popup is the reliable way to sit on top
+        // without focus; on Wayland a popup needs a parent, so use a toplevel.
+        let kind = if !layer && x11 {
+            gtk::WindowType::Popup
+        } else {
+            gtk::WindowType::Toplevel
+        };
+        let window = gtk::Window::new(kind);
+        window.set_title("Spechy");
+        window.set_decorated(false);
+        window.set_resizable(false);
+        window.set_accept_focus(false);
+        window.set_focus_on_map(false);
+        window.set_skip_taskbar_hint(true);
+        window.set_skip_pager_hint(true);
+        window.set_app_paintable(true);
+        if let Some(visual) = display.default_screen().rgba_visual() {
+            window.set_visual(Some(&visual));
+        } else {
+            log::warn!("pill: no RGBA visual, the pill will not be transparent");
+        }
+
+        if layer {
+            window.init_layer_shell();
+            window.set_namespace("spechy-pill");
+            window.set_layer(gtk_layer_shell::Layer::Overlay);
+            window.set_anchor(gtk_layer_shell::Edge::Bottom, true);
+            window.set_keyboard_interactivity(false);
+            window.set_exclusive_zone(0);
+        } else {
+            log::warn!("pill: layer-shell not supported, using a keep-above window");
+            window.set_keep_above(true);
+            window.set_type_hint(gdk::WindowTypeHint::Notification);
+        }
+
+        window.add_events(gdk::EventMask::BUTTON_PRESS_MASK);
+        window.connect_draw(|widget, cr| {
+            cr.set_operator(cairo::Operator::Source);
+            cr.set_source_rgba(0.0, 0.0, 0.0, 0.0);
+            let _ = cr.paint();
+            SURFACE.with(|cell| {
+                let Ok(slot) = cell.try_borrow() else { return };
+                let Some(surface) = slot.as_ref() else { return };
+                let Some(frame) = surface.frame.as_ref() else {
+                    return;
+                };
+                let dev = widget.scale_factor().max(1) as f64;
+                let (x, y) = frame_origin(widget, surface);
+                cr.save().ok();
+                cr.scale(1.0 / dev, 1.0 / dev);
+                if cr.set_source_surface(frame, x, y).is_ok() {
+                    let _ = cr.paint();
+                }
+                // Restoring drops the reference to the frame, so the next
+                // render gets exclusive access to its pixels again.
+                cr.restore().ok();
+            });
+            glib::Propagation::Stop
+        });
+        window.connect_button_press_event(|widget, event| {
+            on_button_press(widget, event);
+            glib::Propagation::Stop
+        });
+        window.connect_scale_factor_notify(|_| notify());
+
+        SURFACE.with(|cell| {
+            *cell.borrow_mut() = Some(Surface {
+                window,
+                layer,
+                frame: None,
+                width: 0,
+                height: 0,
+                base: Vec::new(),
+                base_key: None,
+                measure_key: None,
+                measure: (0.0, 0.0),
+                window_size: (0, 0),
+                margin: -1,
+                input_rect: None,
+                retry_cursor: None,
+            });
+        });
+        Ok(())
+    }
+
+    /// Where the frame's top left sits in the window, in physical pixels. The
+    /// shape lives at the bottom center of the frame and the window is anchored
+    /// bottom center, so aligning bottom centers keeps the pill in place even
+    /// for the frame or two before the compositor applied a new window size.
+    fn frame_origin(widget: &gtk::Window, surface: &Surface) -> (f64, f64) {
+        let dev = widget.scale_factor().max(1) as f64;
+        let alloc_width = widget.allocated_width() as f64 * dev;
+        let alloc_height = widget.allocated_height() as f64 * dev;
+        (
+            ((alloc_width - surface.width as f64) / 2.0).round(),
+            alloc_height - surface.height as f64,
+        )
+    }
+
+    fn on_button_press(widget: &gtk::Window, event: &gdk::EventButton) {
+        // Windows reacts to WM_LBUTTONDOWN only; GTK also sends 2BUTTON_PRESS.
+        if event.button() != 1 || event.event_type() != gdk::EventType::ButtonPress {
+            return;
+        }
+        if offers_retry() {
+            // The handler touches pipeline state and calls back into set_state.
+            std::thread::spawn(|| {
+                if let Some(cell) = RETRY_HANDLER.get() {
+                    if let Ok(handler) = cell.lock() {
+                        (handler)();
+                    }
+                }
+            });
+            return;
+        }
+        let origin = SURFACE.with(|cell| {
+            cell.try_borrow()
+                .ok()
+                .and_then(|slot| slot.as_ref().map(|surface| frame_origin(widget, surface)))
+        });
+        let Some((origin_x, origin_y)) = origin else {
+            return;
+        };
+        let dev = widget.scale_factor().max(1) as f64;
+        let (event_x, event_y) = event.position();
+        let x = (event_x * dev - origin_x) as f32;
+        let y = (event_y * dev - origin_y) as f32;
+        let areas = hit_areas().lock().map(|guard| *guard).unwrap_or_default();
+        if !areas.active {
+            return;
+        }
+        let inside =
+            |area: (f32, f32, f32)| ((x - area.0).powi(2) + (y - area.1).powi(2)).sqrt() <= area.2;
+        // Off the GTK thread: the pipeline may block or wait for the main loop.
+        if inside(areas.cancel) {
+            std::thread::spawn(|| {
+                if let Some(cell) = CALLBACKS.get() {
+                    if let Ok(callbacks) = cell.lock() {
+                        (callbacks.cancel)();
+                    }
+                }
+            });
+        } else if inside(areas.confirm) {
+            std::thread::spawn(|| {
+                if let Some(cell) = CALLBACKS.get() {
+                    if let Ok(callbacks) = cell.lock() {
+                        (callbacks.confirm)();
+                    }
+                }
+            });
+        }
+    }
+
+    fn arm_hide_timer() {
+        cancel_hide_timer();
+        let id = glib::timeout_add_local_once(Duration::from_millis(DONE_VISIBLE_MS), || {
+            // Fired: the source is gone, only forget its id.
+            HIDE_TIMER.with(|cell| cell.borrow_mut().take());
+            if matches!(current_state(), PillState::Done) {
+                let next = if ALWAYS_VISIBLE.load(Ordering::SeqCst) {
+                    PillState::Idle
+                } else {
+                    PillState::Hidden
+                };
+                if let Ok(mut guard) = state_cell().lock() {
+                    *guard = next;
+                }
+                apply_state();
+            }
+        });
+        HIDE_TIMER.with(|cell| *cell.borrow_mut() = Some(id));
+    }
+
+    fn cancel_hide_timer() {
+        if let Some(id) = HIDE_TIMER.with(|cell| cell.borrow_mut().take()) {
+            id.remove();
+        }
+    }
+
+    fn window() -> Option<gtk::Window> {
+        SURFACE.with(|cell| cell.borrow().as_ref().map(|surface| surface.window.clone()))
+    }
+
+    fn hide_window() {
+        if let Some(window) = window() {
+            window.hide();
+        }
+    }
+
+    pub(super) fn apply_state() {
+        STAT_UPDATES.fetch_add(1, Ordering::Relaxed);
+        let Some(window) = window() else { return };
+        let state = current_state();
+
+        // Arm the hide timer exactly once per Done, drop it in every other state.
+        if matches!(state, PillState::Done) {
+            arm_hide_timer();
+        } else {
+            cancel_hide_timer();
+        }
+
+        // A late Done, after the pill is gone or already on its way out, is the
+        // tail of a finished dictation: it must not pop the pill back up.
+        if matches!(state, PillState::Done) {
+            let stale = ANIM.with(|cell| {
+                let anim = cell.borrow();
+                !anim.visible || anim.motion == Motion::Hide
+            });
+            if stale {
+                cancel_hide_timer();
+                if let Ok(mut guard) = state_cell().lock() {
+                    if matches!(*guard, PillState::Done) {
+                        *guard = PillState::Hidden;
+                    }
+                }
+                return;
+            }
+        }
+
+        let state = current_state();
+        let hiding = ANIM.with(|cell| {
+            let mut anim = cell.borrow_mut();
+            if matches!(state, PillState::Hidden) {
+                if !anim.visible {
+                    anim.motion = Motion::None;
+                    return false;
+                }
+                if anim.motion != Motion::Hide {
+                    let done = if anim.motion == Motion::Show {
+                        invert(hide_scale, show_scale(anim.progress()))
+                    } else {
+                        0.0
+                    };
+                    anim.begin(Motion::Hide, done);
+                }
+                true
+            } else {
+                anim.visible_state = state.clone();
+                if !anim.visible {
+                    anim.visible = true;
+                    anim.last_shape = None;
+                    anim.begin(Motion::Show, 0.0);
+                } else if anim.motion == Motion::Hide {
+                    let done = invert(show_scale, hide_scale(anim.progress()));
+                    anim.begin(Motion::Show, done);
+                }
+                false
+            }
+        });
+
+        if matches!(state, PillState::Hidden) && !hiding {
+            sync_timer();
+            hide_window();
+            return;
+        }
+
+        render();
+        update_cursor(&window);
+        if !window.is_visible() {
+            window.show();
+        }
+        if let Some(gdk_window) = window.window() {
+            gdk_window.raise();
+        }
+        sync_timer();
+    }
+
+    fn update_cursor(window: &gtk::Window) {
+        let retry = offers_retry();
+        let changed = SURFACE.with(|cell| {
+            let mut slot = cell.borrow_mut();
+            let Some(surface) = slot.as_mut() else {
+                return false;
+            };
+            let changed = surface.retry_cursor != Some(retry);
+            surface.retry_cursor = Some(retry);
+            changed
+        });
+        if !changed {
+            return;
+        }
+        // Not realized yet: the next state change sets it.
+        let Some(gdk_window) = window.window() else {
+            SURFACE.with(|cell| {
+                if let Some(surface) = cell.borrow_mut().as_mut() {
+                    surface.retry_cursor = None;
+                }
+            });
+            return;
+        };
+        let cursor = if retry {
+            gdk::Cursor::from_name(&gdk_window.display(), "pointer")
+        } else {
+            None
+        };
+        gdk_window.set_cursor(cursor.as_ref());
+    }
+
+    /// The tick runs while a state animates or a transition is live.
+    fn sync_timer() {
+        let wanted = kind_animates(kind_of(&current_state()))
+            || ANIM.with(|cell| cell.borrow().motion != Motion::None);
+        TICK.with(|cell| {
+            let mut slot = cell.borrow_mut();
+            if wanted {
+                if slot.is_none() {
+                    *slot = Some(glib::timeout_add_local(
+                        Duration::from_millis(FRAME_MS),
+                        tick,
+                    ));
+                }
+            } else if let Some(id) = slot.take() {
+                // Also fine from inside the tick itself: GLib destroys the
+                // running source once it returns.
+                id.remove();
+            }
+        });
+    }
+
+    fn tick() -> glib::ControlFlow {
+        FRAME.fetch_add(1, Ordering::Relaxed);
+        render();
+        finish_transition();
+        // sync_timer is the only owner of the source and removes it when idle.
+        sync_timer();
+        glib::ControlFlow::Continue
+    }
+
+    fn finish_transition() {
+        let hide_now = ANIM.with(|cell| {
+            let mut anim = cell.borrow_mut();
+            if anim.motion == Motion::None || anim.progress() < 1.0 {
+                return false;
+            }
+            let was_hide = anim.motion == Motion::Hide;
+            anim.motion = Motion::None;
+            if was_hide {
+                anim.visible = false;
+                anim.last_shape = None;
+            }
+            was_hide
+        });
+        if hide_now {
+            hide_window();
+        }
+    }
+
+    fn render() {
+        let started = std::time::Instant::now();
+        let live = current_state();
+        let (state, motion, progress) = ANIM.with(|cell| {
+            let anim = cell.borrow();
+            let state = if matches!(live, PillState::Hidden) {
+                anim.visible_state.clone()
+            } else {
+                live.clone()
+            };
+            (state, anim.motion, anim.progress())
+        });
+        if matches!(state, PillState::Hidden) {
+            return;
+        }
+        if matches!(live, PillState::Hidden) && motion != Motion::Hide {
+            return;
+        }
+
+        let started_resize = SURFACE.with(|cell| {
+            let mut slot = cell.borrow_mut();
+            let Some(surface) = slot.as_mut() else {
+                return false;
+            };
+            paint(surface, &state, motion, progress)
+        });
+        if started_resize {
+            sync_timer();
+        }
+        record_render(started.elapsed().as_nanos() as u64);
+    }
+
+    fn font_description(scale: f32) -> pango::FontDescription {
+        let mut description = pango::FontDescription::from_string(FONT_FAMILY);
+        description.set_weight(pango::Weight::Normal);
+        // Absolute size is in device pixels, like CreateFontW's negative height.
+        description.set_absolute_size((TEXT_SIZE * scale) as f64 * pango::SCALE as f64);
+        description
+    }
+
+    fn text_layout(window: &gtk::Window, text: &str, scale: f32) -> pango::Layout {
+        let layout = window.create_pango_layout(Some(text));
+        layout.set_font_description(Some(&font_description(scale)));
+        layout
+    }
+
+    /// Rounds a physical size up to whole logical pixels.
+    fn round_up(value: i32, multiple: i32) -> i32 {
+        (value + multiple - 1) / multiple * multiple
+    }
+
+    /// Paints one frame; returns true when it started a resize transition.
+    fn paint(surface: &mut Surface, state: &PillState, motion: Motion, progress: f32) -> bool {
+        let window = surface.window.clone();
+        let dev = window.scale_factor().max(1);
+        let scale = dev as f32 * user_scale();
+        let scale_bits = scale.to_bits();
+        let text = match state {
+            PillState::Recording { live_text, .. } => live_text.clone(),
+            PillState::Error { message, .. } => message.clone(),
+            _ => String::new(),
+        };
+        let is_error = matches!(state, PillState::Error { .. });
+
+        // Text measurement, only redone when the text or the scale changed.
+        let measure_key = Some((text.clone(), scale_bits, is_error));
+        if surface.measure_key != measure_key {
+            let mut size = (0.0f32, 0.0f32);
+            if !text.is_empty() {
+                let layout = text_layout(&window, &text, scale);
+                if is_error {
+                    layout.set_single_paragraph_mode(true);
+                } else {
+                    layout.set_width(
+                        ((PANEL_MAX_WIDTH - 2.0 * TEXT_PADDING) * scale) as i32 * pango::SCALE,
+                    );
+                    layout.set_wrap(pango::WrapMode::WordChar);
+                }
+                let (width, height) = layout.pixel_size();
+                size = (width as f32, height as f32);
+            }
+            surface.measure = size;
+            surface.measure_key = measure_key;
+            surface.base_key = None;
+        }
+        let (text_width, total_height) = surface.measure;
+        let visible_height = if is_error {
+            0.0
+        } else {
+            total_height.min(TEXT_LINE_HEIGHT * scale * TEXT_MAX_LINES)
+        };
+
+        let rest = shape_metrics(state, scale, text_width, visible_height);
+
+        // A size change while sitting still starts a grow or shrink.
+        let mut motion = motion;
+        let mut progress = progress;
+        let mut started_resize = false;
+        if motion == Motion::None {
+            started_resize = ANIM.with(|cell| {
+                let mut anim = cell.borrow_mut();
+                if anim.last_scale_bits != scale_bits {
+                    return false;
+                }
+                match anim.last_shape {
+                    Some(previous)
+                        if (previous.0 - rest.0).abs() > 0.5
+                            || (previous.1 - rest.1).abs() > 0.5 =>
+                    {
+                        anim.from_shape = previous;
+                        anim.begin(Motion::Resize, 0.0);
+                        true
+                    }
+                    _ => false,
+                }
+            });
+            if started_resize {
+                motion = Motion::Resize;
+                progress = 0.0;
+                log::debug!("pill: resize to {:.0}x{:.0}", rest.0, rest.1);
+            }
+        }
+
+        let (shape, effective_scale, opacity, window_width, window_height) = match motion {
+            Motion::Show | Motion::Hide => {
+                let (factor, alpha) = if motion == Motion::Show {
+                    (show_scale(progress), show_alpha(progress))
+                } else {
+                    (hide_scale(progress), hide_alpha(progress))
+                };
+                let (width, height) =
+                    window_size_for(rest.0 * SHOW_PEAK, rest.1 * SHOW_PEAK, scale);
+                (
+                    (
+                        rest.0 * factor,
+                        rest.1 * factor,
+                        rest.2 * factor,
+                        rest.3 * factor,
+                    ),
+                    scale * factor,
+                    alpha,
+                    width,
+                    height,
+                )
+            }
+            Motion::Resize => {
+                let from = ANIM.with(|cell| cell.borrow().from_shape);
+                let eased = ease_out_cubic(progress);
+                let mix = |a: f32, b: f32| a + (b - a) * eased;
+                let (width, height) =
+                    window_size_for(rest.0.max(from.0), rest.1.max(from.1), scale);
+                (
+                    (
+                        mix(from.0, rest.0),
+                        mix(from.1, rest.1),
+                        mix(from.2, rest.2),
+                        mix(from.3, rest.3),
+                    ),
+                    scale,
+                    1.0,
+                    width,
+                    height,
+                )
+            }
+            Motion::None => {
+                let (width, height) = window_size_for(rest.0, rest.1, scale);
+                (rest, scale, 1.0, width, height)
+            }
+        };
+
+        let layout = layout_with(
+            shape.0,
+            shape.1,
+            shape.2,
+            shape.3,
+            round_up(window_width, dev),
+            round_up(window_height, dev),
+            effective_scale,
+        );
+
+        // The frame image, only rebuilt when the window size changes.
+        if surface.width != layout.window_width
+            || surface.height != layout.window_height
+            || surface.frame.is_none()
+        {
+            match cairo::ImageSurface::create(
+                cairo::Format::ARgb32,
+                layout.window_width,
+                layout.window_height,
+            ) {
+                Ok(frame) if frame.stride() == layout.window_width * 4 => {
+                    surface.frame = Some(frame);
+                }
+                Ok(_) => {
+                    log::error!("pill: unexpected cairo stride");
+                    return started_resize;
+                }
+                Err(error) => {
+                    log::error!("pill: could not create the frame: {error}");
+                    return started_resize;
+                }
+            }
+            surface.width = layout.window_width;
+            surface.height = layout.window_height;
+            surface.base_key = None;
+        }
+        let byte_count = (layout.window_width * layout.window_height * 4) as usize;
+        let Some(mut frame) = surface.frame.take() else {
+            return started_resize;
+        };
+
+        if motion == Motion::None {
+            // At rest: the static layer (with the text) is cached and only the
+            // moving parts are redrawn.
+            let key = CacheKey {
+                width: layout.window_width,
+                height: layout.window_height,
+                kind: kind_of(state),
+                scale_bits,
+                text: text.clone(),
+            };
+            if surface.base_key.as_ref() != Some(&key) {
+                surface.base.clear();
+                surface.base.resize(byte_count, 0);
+                {
+                    let mut canvas =
+                        Canvas::wrap(layout.window_width, layout.window_height, &mut surface.base);
+                    draw_static(&mut canvas, state, &layout);
+                }
+                let base = &surface.base;
+                with_pixels(&mut frame, |pixels| pixels[..byte_count].copy_from_slice(base));
+                if !text.is_empty() {
+                    draw_text(&window, &frame, &layout, &text, is_error, total_height, scale);
+                    let base = &mut surface.base;
+                    with_pixels(&mut frame, |pixels| base.copy_from_slice(&pixels[..byte_count]));
+                }
+                surface.base_key = Some(key);
+            } else {
+                let base = &surface.base;
+                with_pixels(&mut frame, |pixels| pixels[..byte_count].copy_from_slice(base));
+            }
+        } else {
+            // While moving, the geometry changes every frame, so compose fresh.
+            with_pixels(&mut frame, |pixels| {
+                pixels[..byte_count].fill(0);
+                let mut canvas =
+                    Canvas::wrap(layout.window_width, layout.window_height, pixels);
+                draw_static(&mut canvas, state, &layout);
+            });
+            // Text only while the shape is not scaled, as on Windows.
+            if !text.is_empty() && motion == Motion::Resize {
+                draw_text(&window, &frame, &layout, &text, is_error, total_height, scale);
+            }
+        }
+
+        with_pixels(&mut frame, |pixels| {
+            {
+                let mut canvas = Canvas::wrap(
+                    layout.window_width,
+                    layout.window_height,
+                    &mut pixels[..byte_count],
+                );
+                draw_dynamic(&mut canvas, state, &layout, FRAME.load(Ordering::Relaxed));
+            }
+            // Premultiplied: scaling all four channels is a change of opacity.
+            if opacity < 0.999 {
+                let factor = (opacity.clamp(0.0, 1.0) * 256.0) as u32;
+                for byte in pixels.iter_mut() {
+                    *byte = ((*byte as u32 * factor) >> 8) as u8;
+                }
+            }
+        });
+        surface.frame = Some(frame);
+
+        ANIM.with(|cell| {
+            let mut anim = cell.borrow_mut();
+            anim.last_shape = Some(rest);
+            anim.last_scale_bits = scale_bits;
+        });
+
+        place_window(surface, &layout, rest, dev);
+        window.queue_draw();
+        started_resize
+    }
+
+    /// Runs `f` on the frame's pixels (exclusive access, marked dirty after).
+    fn with_pixels(frame: &mut cairo::ImageSurface, f: impl FnOnce(&mut [u8])) {
+        frame.flush();
+        match frame.data() {
+            Ok(mut data) => f(&mut data),
+            Err(error) => log::warn!("pill: frame busy: {error}"),
+        }
+    }
+
+    /// Window size, bottom margin and click area, applied only on change.
+    fn place_window(surface: &mut Surface, layout: &Layout, rest: (f32, f32, f32, f32), dev: i32) {
+        let window = &surface.window;
+        let logical = (layout.window_width / dev, layout.window_height / dev);
+        // Same distance from the work area bottom as on Windows: the shape sits
+        // one shadow margin above the window bottom.
+        let margin = ((BOTTOM_OFFSET - SHADOW_MARGIN) * user_scale()).round() as i32;
+
+        if surface.window_size != logical {
+            window.set_size_request(logical.0, logical.1);
+            window.resize(logical.0, logical.1);
+            surface.window_size = logical;
+            if !surface.layer {
+                place_fallback(window, logical, margin);
+            }
+        }
+        if surface.margin != margin {
+            surface.margin = margin;
+            if surface.layer {
+                window.set_layer_shell_margin(gtk_layer_shell::Edge::Bottom, margin);
+            } else {
+                place_fallback(window, logical, margin);
+            }
+        }
+
+        // Only the resting shape takes clicks; everything around it, the
+        // shadow included, lets them through to the window below.
+        let margin_px = SHADOW_MARGIN * (dev as f32 * user_scale());
+        let shape_x = (layout.window_width as f32 - rest.0) / 2.0;
+        let shape_y = layout.window_height as f32 - margin_px - rest.1;
+        let d = dev as f32;
+        let rect = (
+            (shape_x / d).floor() as i32,
+            (shape_y / d).floor() as i32,
+            (rest.0 / d).ceil() as i32,
+            (rest.1 / d).ceil() as i32,
+        );
+        if surface.input_rect != Some(rect) {
+            surface.input_rect = Some(rect);
+            let region = cairo::Region::create_rectangle(&cairo::RectangleInt::new(
+                rect.0, rect.1, rect.2, rect.3,
+            ));
+            window.input_shape_combine_region(Some(&region));
+        }
+    }
+
+    /// Without layer-shell: bottom center of the primary monitor's work area.
+    /// Wayland compositors ignore this; X11 honors it.
+    fn place_fallback(window: &gtk::Window, logical: (i32, i32), margin: i32) {
+        let Some(display) = gdk::Display::default() else {
+            return;
+        };
+        let Some(monitor) = display.primary_monitor().or_else(|| display.monitor(0)) else {
+            return;
+        };
+        let area = monitor.workarea();
+        window.move_(
+            area.x() + (area.width() - logical.0) / 2,
+            area.y() + area.height() - margin - logical.1,
+        );
+    }
+
+    fn draw_text(
+        window: &gtk::Window,
+        frame: &cairo::ImageSurface,
+        layout: &Layout,
+        text: &str,
+        is_error: bool,
+        total_height: f32,
+        scale: f32,
+    ) {
+        let Ok(cr) = cairo::Context::new(frame) else {
+            return;
+        };
+        // ATOP keeps the glass alpha, like the Windows path that restores the
+        // alpha channel after GDI drew the text.
+        cr.set_operator(cairo::Operator::Atop);
+        let text_layout = text_layout(window, text, scale);
+        let attributes = pango::AttrList::new();
+        attributes.insert(pango::AttrColor::new_foreground(65535, 65535, 65535));
+        attributes.insert(pango::AttrInt::new_foreground_alpha(
+            (TEXT_ALPHA * 65535.0) as u16,
+        ));
+        text_layout.set_attributes(Some(&attributes));
+        let style = window.style_context();
+
+        if is_error {
+            let inset = TEXT_PADDING * scale;
+            let width = layout.shape_width - 2.0 * inset;
+            text_layout.set_single_paragraph_mode(true);
+            text_layout.set_width((width * pango::SCALE as f32) as i32);
+            text_layout.set_ellipsize(pango::EllipsizeMode::End);
+            text_layout.set_alignment(pango::Alignment::Center);
+            let (_, height) = text_layout.pixel_size();
+            let y = layout.shape_y + (layout.shape_height - height as f32) / 2.0;
+            gtk::render_layout(
+                &style,
+                &cr,
+                (layout.shape_x + inset).round() as f64,
+                y.round() as f64,
+                &text_layout,
+            );
+        } else if let Some((tx, ty, tw, th)) = layout.text_area {
+            // Older lines scroll out of view at the top.
+            let overflow = (total_height - th).max(0.0);
+            cr.rectangle(
+                tx.floor() as f64,
+                ty.floor() as f64,
+                tw.ceil() as f64,
+                th.ceil() as f64,
+            );
+            cr.clip();
+            text_layout.set_width((tw * pango::SCALE as f32) as i32);
+            text_layout.set_wrap(pango::WrapMode::WordChar);
+            gtk::render_layout(
+                &style,
+                &cr,
+                tx.floor() as f64,
+                (ty - overflow).floor() as f64,
+                &text_layout,
+            );
+        }
+        drop(cr);
+        frame.flush();
+    }
+
+    #[cfg(test)]
+    mod tests {
+        use super::*;
+        use std::sync::atomic::AtomicUsize;
+
+        static CANCELS: AtomicUsize = AtomicUsize::new(0);
+        static CONFIRMS: AtomicUsize = AtomicUsize::new(0);
+
+        fn pump_for(ms: u64) {
+            let until = std::time::Instant::now() + Duration::from_millis(ms);
+            while std::time::Instant::now() < until {
+                while gtk::events_pending() {
+                    gtk::main_iteration_do(false);
+                }
+                std::thread::sleep(Duration::from_millis(4));
+            }
+        }
+
+        fn show(state: PillState) {
+            *state_cell().lock().unwrap() = state;
+            apply_state();
+        }
+
+        /// Synthesizes a left click at a point given in frame pixels.
+        fn click_frame_point(x: f32, y: f32) {
+            let window = window().unwrap();
+            let (origin_x, origin_y) =
+                SURFACE.with(|cell| frame_origin(&window, cell.borrow().as_ref().unwrap()));
+            let dev = window.scale_factor().max(1) as f64;
+            let mut event = gdk::Event::new(gdk::EventType::ButtonPress);
+            unsafe {
+                let raw = event.as_mut() as *mut gdk::ffi::GdkEventAny as *mut gdk::ffi::GdkEventButton;
+                (*raw).button = 1;
+                (*raw).x = (x as f64 + origin_x) / dev;
+                (*raw).y = (y as f64 + origin_y) / dev;
+            }
+            let button = event.downcast_ref::<gdk::EventButton>().unwrap();
+            on_button_press(&window, button);
+        }
+
+        fn screenshot(name: &str) {
+            let directory = std::env::var("SPECHY_PILL_SHOTS")
+                .unwrap_or_else(|_| "/tmp/claude-1000/spechy-pill".to_string());
+            let _ = std::fs::create_dir_all(&directory);
+            let display = gdk::Display::default().unwrap();
+            let monitor = display.primary_monitor().or_else(|| display.monitor(0)).unwrap();
+            let area = monitor.geometry();
+            let (width, height) = (560, 300);
+            let geometry = format!(
+                "{},{} {}x{}",
+                area.x() + (area.width() - width) / 2,
+                area.y() + area.height() - height,
+                width,
+                height
+            );
+            let path = format!("{directory}/{name}.png");
+            match std::process::Command::new("grim")
+                .args(["-g", &geometry, &path])
+                .status()
+            {
+                Ok(status) if status.success() => println!("screenshot {path}"),
+                other => println!("grim failed for {name}: {other:?}"),
+            }
+        }
+
+        #[test]
+        #[ignore = "Opens the pill on the desktop (no microphone, no sound); grim screenshots"]
+        fn pill_linux_states_and_clicks() {
+            gtk::init().unwrap();
+            STARTED.store(true, Ordering::SeqCst);
+            start(
+                Box::new(|| {
+                    CANCELS.fetch_add(1, Ordering::SeqCst);
+                }),
+                Box::new(|| {
+                    CONFIRMS.fetch_add(1, Ordering::SeqCst);
+                }),
+            )
+            .unwrap();
+            println!("layer shell: {}", layer_shell_supported());
+
+            show(PillState::Idle);
+            pump_for(500);
+            screenshot("1-idle");
+
+            show(PillState::Recording { level: 0.6, live_text: String::new() });
+            pump_for(500);
+            assert!(window().unwrap().is_visible());
+            screenshot("2-recording");
+
+            // The cancel and confirm buttons react to clicks at their centers.
+            let areas = *hit_areas().lock().unwrap();
+            assert!(areas.active, "recording must expose the buttons");
+            click_frame_point(areas.cancel.0, areas.cancel.1);
+            click_frame_point(areas.confirm.0, areas.confirm.1);
+            // Between the buttons nothing happens.
+            click_frame_point(
+                (areas.cancel.0 + areas.confirm.0) / 2.0,
+                areas.cancel.1,
+            );
+            pump_for(100);
+            assert_eq!(CANCELS.load(Ordering::SeqCst), 1);
+            assert_eq!(CONFIRMS.load(Ordering::SeqCst), 1);
+
+            // Live transcript: the pill grows upward, older lines scroll away.
+            set_state_test(PillState::Recording {
+                level: 0.4,
+                live_text: "Das ist ein kurzer Test des Live-Transkripts.".into(),
+            });
+            pump_for(500);
+            screenshot("3-live-short");
+            set_state_test(PillState::Recording {
+                level: 0.4,
+                live_text: "Das ist ein deutlich laengerer Test des Live-Transkripts, \
+                    der ueber mehrere Zeilen laeuft, damit man sieht, wie die Pill nach oben \
+                    waechst und aeltere Zeilen oben aus dem sichtbaren Bereich verschwinden. \
+                    Noch ein Satz. Und noch einer, damit es wirklich mehr als fuenf Zeilen \
+                    werden und das Scrollen greift."
+                    .into(),
+            });
+            pump_for(500);
+            screenshot("4-live-long");
+
+            show(PillState::Processing);
+            pump_for(500);
+            screenshot("5-processing");
+
+            let retried = std::sync::Arc::new(AtomicBool::new(false));
+            let flag = retried.clone();
+            set_retry_handler(move || flag.store(true, Ordering::SeqCst));
+            show(PillState::Error { message: "Click to retry".into(), retry: true });
+            pump_for(500);
+            screenshot("6-error-retry");
+            click_frame_point(10.0, 10.0);
+            pump_for(100);
+            assert!(retried.load(Ordering::SeqCst), "retry click must call the handler");
+
+            show(PillState::Done);
+            pump_for(150);
+            screenshot("7-done");
+            // Done hides itself after 600 ms plus the hide transition.
+            pump_for(900);
+            assert!(!window().unwrap().is_visible(), "done must hide the pill");
+            assert!(matches!(current_state(), PillState::Hidden));
+            assert!(TICK.with(|cell| cell.borrow().is_none()), "tick must stop when hidden");
+        }
+
+        /// Renders every state without showing a window and writes the raw
+        /// premultiplied BGRA frames as `<name>_<width>x<height>.bgra`, so the
+        /// look can be checked without touching the desktop.
+        #[test]
+        #[ignore = "Needs a display connection; writes raw frames to SPECHY_PILL_SHOTS"]
+        fn pill_linux_offscreen_frames() {
+            gtk::init().unwrap();
+            create_window().unwrap();
+            let directory = std::env::var("SPECHY_PILL_SHOTS")
+                .unwrap_or_else(|_| "/tmp/claude-1000/spechy-pill".to_string());
+            std::fs::create_dir_all(&directory).unwrap();
+            let long = "Das ist ein deutlich laengerer Test des Live-Transkripts, der ueber \
+                mehrere Zeilen laeuft, damit man sieht, wie die Pill nach oben waechst und \
+                aeltere Zeilen oben aus dem sichtbaren Bereich verschwinden. Noch ein Satz. \
+                Und noch einer, damit es wirklich mehr als fuenf Zeilen werden.";
+            let cases: Vec<(&str, PillState, Motion, f32)> = vec![
+                ("idle", PillState::Idle, Motion::None, 1.0),
+                (
+                    "recording",
+                    PillState::Recording { level: 0.7, live_text: String::new() },
+                    Motion::None,
+                    1.0,
+                ),
+                (
+                    "recording-show-40",
+                    PillState::Recording { level: 0.7, live_text: String::new() },
+                    Motion::Show,
+                    0.4,
+                ),
+                (
+                    "live-short",
+                    PillState::Recording { level: 0.3, live_text: "Hallo, kurzer Test.".into() },
+                    Motion::None,
+                    1.0,
+                ),
+                (
+                    "live-long",
+                    PillState::Recording { level: 0.3, live_text: long.into() },
+                    Motion::None,
+                    1.0,
+                ),
+                ("processing", PillState::Processing, Motion::None, 1.0),
+                (
+                    "error-retry",
+                    PillState::Error { message: "Click to retry".into(), retry: true },
+                    Motion::None,
+                    1.0,
+                ),
+                (
+                    "error-long",
+                    PillState::Error {
+                        message: "Transcription failed: the provider did not answer in time, \
+                            check your connection and the API key"
+                            .into(),
+                        retry: false,
+                    },
+                    Motion::None,
+                    1.0,
+                ),
+                ("done", PillState::Done, Motion::None, 1.0),
+            ];
+            for (name, state, motion, progress) in cases {
+                *state_cell().lock().unwrap() = state.clone();
+                ANIM.with(|cell| {
+                    let mut anim = cell.borrow_mut();
+                    anim.visible = true;
+                    anim.visible_state = state.clone();
+                    // No previous shape: never start a resize here.
+                    anim.last_shape = None;
+                    anim.begin(motion, progress);
+                    if motion == Motion::None {
+                        anim.motion = Motion::None;
+                    }
+                });
+                FRAME.store(20, Ordering::Relaxed);
+                SURFACE.with(|cell| {
+                    let mut slot = cell.borrow_mut();
+                    let surface = slot.as_mut().unwrap();
+                    paint(surface, &state, motion, progress);
+                    let mut frame = surface.frame.take().unwrap();
+                    let (width, height) = (surface.width, surface.height);
+                    with_pixels(&mut frame, |pixels| {
+                        let path = format!("{directory}/{name}_{width}x{height}.bgra");
+                        std::fs::write(&path, &pixels[..]).unwrap();
+                        println!("{path}");
+                    });
+                    surface.frame = Some(frame);
+                });
+            }
+        }
+
+        /// Like the public set_state: the tick picks up text changes.
+        fn set_state_test(state: PillState) {
+            set_state(state);
+        }
+    }
+}
+
 // ------------------------------------------------------------------ API
 
 #[cfg(windows)]
@@ -1930,20 +3106,60 @@ fn repaint() {
     win::notify();
 }
 
-#[cfg(not(windows))]
+#[cfg(target_os = "linux")]
+pub fn init(
+    on_cancel: impl Fn() + Send + 'static,
+    on_confirm: impl Fn() + Send + 'static,
+) -> Result<(), String> {
+    if STARTED.swap(true, Ordering::SeqCst) {
+        return Ok(());
+    }
+    let percent = crate::settings::current().pill_scale;
+    USER_SCALE.store(
+        percent.clamp(MIN_SCALE_PERCENT, MAX_SCALE_PERCENT),
+        Ordering::SeqCst,
+    );
+    let result = linux::start(Box::new(on_cancel), Box::new(on_confirm));
+    if result.is_err() {
+        STARTED.store(false, Ordering::SeqCst);
+    }
+    result
+}
+
+#[cfg(target_os = "linux")]
+pub fn set_state(state: PillState) {
+    let kind = kind_of(&state);
+    let mut changed = true;
+    if let Ok(mut guard) = state_cell().lock() {
+        changed = kind_of(&guard) != kind;
+        *guard = state;
+    }
+    // Same throttling as on Windows: level and live-text updates ride along
+    // with the animation tick; only a kind change schedules a main-loop update.
+    if changed || !kind_animates(kind) {
+        linux::notify();
+    }
+}
+
+#[cfg(target_os = "linux")]
+fn repaint() {
+    linux::notify();
+}
+
+#[cfg(not(any(windows, target_os = "linux")))]
 pub fn init(
     _on_cancel: impl Fn() + Send + 'static,
     _on_confirm: impl Fn() + Send + 'static,
 ) -> Result<(), String> {
-    Err("The pill is only implemented on Windows.".to_string())
+    Err("The pill is only implemented on Windows and Linux.".to_string())
 }
 
-#[cfg(not(windows))]
+#[cfg(not(any(windows, target_os = "linux")))]
 pub fn set_state(state: PillState) {
     if let Ok(mut guard) = state_cell().lock() {
         *guard = state;
     }
 }
 
-#[cfg(not(windows))]
+#[cfg(not(any(windows, target_os = "linux")))]
 fn repaint() {}

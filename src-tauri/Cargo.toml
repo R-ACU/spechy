@@ -33,6 +33,8 @@ chrono = { version = "0.4", features = ["serde"] }
 uuid = { version = "1", features = ["v4"] }
 log = "0.4"
 env_logger = "0.11"
+
+[target.'cfg(windows)'.dependencies]
 winreg = "0.52"
 windows = { version = "0.58", features = [
   "Win32_Foundation",
@@ -52,6 +54,12 @@ windows = { version = "0.58", features = [
   "Win32_System_ProcessStatus",
   "Win32_System_SystemInformation",
 ] }
+
+# Linux port (Hyprland/Wayland): the pill is a GTK layer-shell surface drawn with cairo,
+# matching the GTK 0.18 stack Tauri itself links.
+[target.'cfg(target_os = "linux")'.dependencies]
+gtk = "0.18"
+gtk-layer-shell = "0.8"
 
 # The pill rasterizes per pixel; unoptimized debug builds stutter, so keep some optimization in dev.
 [profile.dev]

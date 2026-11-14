@@ -158,7 +158,12 @@ impl Drop for Recorder {
 
 /// Windows below this RMS count as silence. Same threshold the pipeline uses
 /// for the whole-recording check.
+#[cfg(not(target_os = "linux"))]
 pub const SILENCE_RMS: f32 = 0.01;
+/// A USB microphone under PipeWire idles around 0.0003 and speaks around 0.005:
+/// 0.01 dropped every dictation there as silence (same value as the old script).
+#[cfg(target_os = "linux")]
+pub const SILENCE_RMS: f32 = 0.002;
 /// Analysis window: 50 ms, same resolution as the level meter.
 const SILENCE_WINDOW: usize = LEVEL_CHUNK;
 /// Silence kept before the first and after the last speech window so word

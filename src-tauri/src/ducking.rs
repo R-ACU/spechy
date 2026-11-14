@@ -115,12 +115,96 @@ fn worker(rx: std::sync::mpsc::Receiver<Msg>) {
     }
 }
 
-#[cfg(not(windows))]
+/// PipeWire through `pactl`: every playback stream except Spechy's own sounds
+/// and streams that were muted already. The marker file holds the application
+/// names, because stream indices do not survive a restart of the stream.
+#[cfg(target_os = "linux")]
 fn worker(rx: std::sync::mpsc::Receiver<Msg>) {
+    let mut held: Vec<u64> = Vec::new();
     for msg in rx {
-        if let Msg::Restore(Some(done)) = msg {
-            let _ = done.send(());
+        match msg {
+            Msg::Mute => {
+                if !held.is_empty() {
+                    continue;
+                }
+                let streams = pulse::streams();
+                let targets: Vec<&pulse::Stream> =
+                    streams.iter().filter(|s| !s.muted && s.app != "Spechy").collect();
+                for stream in &targets {
+                    pulse::set_mute(stream.index, true);
+                }
+                if !targets.is_empty() {
+                    let names: Vec<&str> = targets.iter().map(|s| s.app.as_str()).collect();
+                    let _ = std::fs::write(marker_path(), names.join("\n"));
+                    log::info!("muted {} audio stream(s) while dictating", targets.len());
+                }
+                held = targets.iter().map(|s| s.index).collect();
+            }
+            Msg::Restore(done) => {
+                if !held.is_empty() {
+                    for index in held.drain(..) {
+                        pulse::set_mute(index, false);
+                    }
+                    let _ = std::fs::remove_file(marker_path());
+                } else if let Ok(text) = std::fs::read_to_string(marker_path()) {
+                    let names: Vec<&str> = text.lines().map(str::trim).collect();
+                    let mut count = 0;
+                    for stream in pulse::streams() {
+                        if stream.muted && names.contains(&stream.app.as_str()) {
+                            pulse::set_mute(stream.index, false);
+                            count += 1;
+                        }
+                    }
+                    log::info!("unmuted {count} audio stream(s) left muted by an earlier run");
+                    let _ = std::fs::remove_file(marker_path());
+                }
+                if let Some(done) = done {
+                    let _ = done.send(());
+                }
+            }
         }
+    }
+}
+
+#[cfg(target_os = "linux")]
+mod pulse {
+    use std::process::Command;
+
+    pub struct Stream {
+        pub index: u64,
+        pub muted: bool,
+        pub app: String,
+    }
+
+    pub fn streams() -> Vec<Stream> {
+        let Ok(out) = Command::new("pactl").args(["-f", "json", "list", "sink-inputs"]).output() else {
+            log::warn!("pactl could not start");
+            return Vec::new();
+        };
+        let Ok(list) = serde_json::from_slice::<Vec<serde_json::Value>>(&out.stdout) else {
+            return Vec::new();
+        };
+        list.iter()
+            .filter_map(|s| {
+                let props = s.get("properties");
+                let app = props
+                    .and_then(|p| p.get("application.name").or_else(|| p.get("node.name")))
+                    .and_then(|a| a.as_str())
+                    .unwrap_or("")
+                    .to_string();
+                Some(Stream {
+                    index: s.get("index")?.as_u64()?,
+                    muted: s.get("mute").and_then(|m| m.as_bool()).unwrap_or(false),
+                    app,
+                })
+            })
+            .collect()
+    }
+
+    pub fn set_mute(index: u64, mute: bool) {
+        let _ = Command::new("pactl")
+            .args(["set-sink-input-mute", &index.to_string(), if mute { "1" } else { "0" }])
+            .output();
     }
 }
 

@@ -5,6 +5,7 @@
 //! `custom_stt_api = "whisper_cpp"` and the `/inference` path in `stt.rs`.
 //! Nothing here runs in the background: the server only starts when the user
 //! asks for it, and it is killed when Spechy exits.
+#![cfg_attr(target_os = "linux", allow(dead_code, unreachable_code, unused_variables))]
 
 use std::path::PathBuf;
 use std::process::{Child, Command, Stdio};
@@ -64,8 +65,21 @@ fn server_dir(id: &str) -> PathBuf {
     crate::settings::data_dir().join("server").join(id)
 }
 
+#[cfg(not(target_os = "linux"))]
 fn binary(id: &str) -> PathBuf {
     server_dir(id).join("Release").join("whisper-server.exe")
+}
+
+/// Linux uses the whisper.cpp server from the package manager, found on PATH.
+#[cfg(target_os = "linux")]
+fn binary(_id: &str) -> PathBuf {
+    std::env::var_os("PATH")
+        .and_then(|paths| {
+            std::env::split_paths(&paths)
+                .map(|dir| dir.join("whisper-server"))
+                .find(|candidate| candidate.is_file())
+        })
+        .unwrap_or_else(|| PathBuf::from("/usr/bin/whisper-server"))
 }
 
 fn is_installed(id: &str) -> bool {
@@ -182,6 +196,8 @@ pub fn install(flavor_id: &str, progress: impl Fn(Progress)) -> Result<LocalServ
     if is_installed(flavor.id) {
         return Ok(status());
     }
+    #[cfg(target_os = "linux")]
+    return Err("On Linux, install whisper.cpp with your package manager (it provides whisper-server), then start it here.".into());
 
     let dir = server_dir(flavor.id);
     std::fs::create_dir_all(&dir).map_err(|e| format!("Could not create {}: {e}", dir.display()))?;

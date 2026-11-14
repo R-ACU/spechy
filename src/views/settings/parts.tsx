@@ -1,5 +1,6 @@
 // Shared building blocks for the settings panel.
 import { useEffect, useState, type ReactNode } from "react";
+import { keyLabel } from "../../lib/platform";
 import { api } from "../../lib/ipc";
 import { Eye, EyeOff } from "lucide-react";
 import { Kbd } from "../../components/ui";
@@ -59,7 +60,7 @@ export function Chord({ chord }: { chord: string }) {
       {parts.map((p, i) => (
         <span key={`${p}-${i}`}>
           {i > 0 && <span className="set-chord-plus">+</span>}
-          <Kbd>{p}</Kbd>
+          <Kbd>{keyLabel(p)}</Kbd>
         </span>
       ))}
     </span>

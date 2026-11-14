@@ -8,7 +8,7 @@
 //! everything goes through one shared device on a single worker thread: sounds
 //! are queued and played one after another. The device is opened with the first
 //! sound and closed again after a couple of seconds of silence.
-#![cfg_attr(not(windows), allow(dead_code))]
+#![cfg_attr(not(windows), allow(dead_code, unused_imports))]
 
 use std::collections::VecDeque;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -155,8 +155,44 @@ pub fn play(kind: SoundKind) {
     }
 }
 
-#[cfg(not(windows))]
-pub fn play(_kind: SoundKind) {}
+/// PipeWire mixes overlapping streams itself, so every sound is its own
+/// `pw-play`. The WAVs are written once to the runtime folder, byte for byte as
+/// embedded. The stream is named "Spechy", which keeps it out of `ducking`.
+#[cfg(target_os = "linux")]
+pub fn play(kind: SoundKind) {
+    use std::process::{Command, Stdio};
+    let (name, bytes): (&str, &[u8]) = match kind {
+        SoundKind::Start => ("start", include_bytes!("../sounds/start.wav")),
+        SoundKind::Stop => ("stop", include_bytes!("../sounds/stop.wav")),
+        SoundKind::Error => ("error", include_bytes!("../sounds/error.wav")),
+    };
+    let dir = std::env::var_os("XDG_RUNTIME_DIR")
+        .map(std::path::PathBuf::from)
+        .unwrap_or_else(std::env::temp_dir)
+        .join("spechy-sounds");
+    let path = dir.join(format!("{name}.wav"));
+    let current = std::fs::metadata(&path).map(|m| m.len() == bytes.len() as u64).unwrap_or(false);
+    if !current && (std::fs::create_dir_all(&dir).is_err() || std::fs::write(&path, bytes).is_err()) {
+        log::warn!("sound {name} could not be prepared");
+        return;
+    }
+    let child = Command::new("pw-play")
+        .args(["-P", "{ application.name = \"Spechy\" media.role = \"Notification\" }"])
+        .arg(&path)
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn();
+    match child {
+        // Reap in the background so no zombie stays behind.
+        Ok(mut child) => {
+            std::thread::spawn(move || {
+                let _ = child.wait();
+            });
+        }
+        Err(e) => log::warn!("pw-play could not start: {e}"),
+    }
+}
 
 #[cfg(windows)]
 fn start_worker() {

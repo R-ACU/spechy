@@ -1,6 +1,7 @@
 // First run flow. Rendered full screen by App.tsx while settings.onboarded is false.
 // Structure follows Wispr Flow's own onboarding (see _dev/wispr-onboarding.md), copy is our own.
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { keyLabel } from "../lib/platform";
 import {
   ArrowLeft,
   ArrowRight,
@@ -26,7 +27,7 @@ const STEPS = ["welcome", "keys", "microphone", "hotkey", "practice", "dictionar
 type StepId = (typeof STEPS)[number];
 
 const SUGGESTED_WORDS = ["Spechy", "TypeScript", "GitHub"];
-const PRACTICE_HINT = "Hold Ctrl + Win and say: Hi Anna, thanks for the update, I will send the files tomorrow.";
+const PRACTICE_HINT = `Hold Ctrl + ${keyLabel("Win")} and say: Hi Anna, thanks for the update, I will send the files tomorrow.`;
 
 /** Renders "Ctrl+Win+Space" as separate key caps. */
 function Chord({ chord }: { chord: string }) {
@@ -37,7 +38,7 @@ function Chord({ chord }: { chord: string }) {
       {parts.map((p, i) => (
         <span key={`${p}-${i}`} className="onb-chord-part">
           {i > 0 && <span className="onb-chord-plus">+</span>}
-          <Kbd>{p}</Kbd>
+          <Kbd>{keyLabel(p)}</Kbd>
         </span>
       ))}
     </span>

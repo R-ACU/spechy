@@ -71,9 +71,55 @@ pub fn foreground_app() -> ForegroundApp {
     }
 }
 
-#[cfg(not(windows))]
+/// Hyprland's active window. `hwnd` carries the window address, `process_name`
+/// the executable name with ".exe" appended, so style rules, categories and the
+/// vibe-coding list written for Windows names keep matching ("code.exe").
+#[cfg(target_os = "linux")]
 pub fn foreground_app() -> ForegroundApp {
-    ForegroundApp::default()
+    let Some(window) = hypr_json(&["activewindow", "-j"]) else {
+        return ForegroundApp::default();
+    };
+    let address = window.get("address").and_then(|a| a.as_str()).unwrap_or("");
+    let hwnd = isize::from_str_radix(address.trim_start_matches("0x"), 16).unwrap_or(0);
+    let class = window.get("class").and_then(|c| c.as_str()).unwrap_or("").to_lowercase();
+    let pid = window.get("pid").and_then(|p| p.as_i64()).unwrap_or(0);
+    let exe = std::fs::read_link(format!("/proc/{pid}/exe"))
+        .ok()
+        .and_then(|p| p.file_name().map(|n| n.to_string_lossy().to_lowercase()));
+    let base = match exe {
+        // Interpreters and wrappers say nothing about the app; the class does.
+        Some(name) if !["electron", "python3", "python", "java", "bwrap"].contains(&name.as_str()) => name,
+        _ => class.rsplit('.').next().unwrap_or(&class).to_string(),
+    };
+    let process_name = if base.is_empty() { String::new() } else { format!("{base}.exe") };
+    let title = window.get("title").and_then(|t| t.as_str()).unwrap_or("").to_string();
+    LINUX_CLASS.with(|c| *c.borrow_mut() = class);
+    ForegroundApp { process_name, title, hwnd }
+}
+
+#[cfg(target_os = "linux")]
+thread_local! {
+    static LINUX_CLASS: std::cell::RefCell<String> = const { std::cell::RefCell::new(String::new()) };
+}
+
+#[cfg(target_os = "linux")]
+pub fn hypr_json(args: &[&str]) -> Option<serde_json::Value> {
+    let out = std::process::Command::new("hyprctl").args(args).output().ok()?;
+    serde_json::from_slice(&out.stdout).ok()
+}
+
+/// Windows whose paste shortcut is Ctrl+Shift+V. Takes the `process_name` of
+/// `foreground_app`; the window class of the last lookup counts as well.
+#[cfg(target_os = "linux")]
+pub fn is_terminal(process_name: &str) -> bool {
+    const TERMINALS: [&str; 12] = [
+        "ghostty", "com.mitchellh.ghostty", "com.mitchellh.ghostty.titled", "kitty", "alacritty",
+        "foot", "footclient", "wezterm-gui", "org.wezfurlong.wezterm", "konsole", "gnome-terminal-server",
+        "org.gnome.terminal",
+    ];
+    let name = process_name.to_lowercase();
+    let name = name.trim_end_matches(".exe");
+    TERMINALS.contains(&name) || LINUX_CLASS.with(|c| TERMINALS.contains(&c.borrow().as_str()))
 }
 
 #[cfg(windows)]
@@ -109,8 +155,35 @@ pub fn focus_hwnd(hwnd: isize) {
     }
 }
 
-#[cfg(not(windows))]
-pub fn focus_hwnd(_hwnd: isize) {}
+#[cfg(target_os = "linux")]
+pub fn focus_hwnd(hwnd: isize) {
+    if hwnd == 0 || foreground_app().hwnd == hwnd {
+        return;
+    }
+    hypr_dispatch(&format!("hl.dsp.focus({{ window = \"address:0x{hwnd:x}\" }})"));
+}
+
+/// Run a Hyprland dispatcher. The config is Lua, so `hyprctl dispatch` takes a Lua
+/// expression (`hl.dsp...`), not the old `focuswindow address:..` form. True on "ok".
+#[cfg(target_os = "linux")]
+pub fn hypr_dispatch(lua: &str) -> bool {
+    std::process::Command::new("hyprctl")
+        .args(["dispatch", lua])
+        .output()
+        .map(|o| String::from_utf8_lossy(&o.stdout).contains("ok"))
+        .unwrap_or(false)
+}
+
+/// Hyprland address of Spechy's own main window (the pill is a layer surface, not a client).
+#[cfg(target_os = "linux")]
+pub fn own_window_address() -> Option<String> {
+    let own = std::process::id() as u64;
+    hypr_json(&["clients", "-j"])?
+        .as_array()?
+        .iter()
+        .find(|c| c.get("pid").and_then(|p| p.as_u64()) == Some(own))
+        .and_then(|c| c.get("address")?.as_str().map(str::to_string))
+}
 
 /// The window belongs to Spechy itself (main window or pill).
 #[cfg(windows)]
@@ -128,9 +201,19 @@ pub fn is_own_process_window(hwnd: isize) -> bool {
     }
 }
 
-#[cfg(not(windows))]
-pub fn is_own_process_window(_hwnd: isize) -> bool {
-    false
+#[cfg(target_os = "linux")]
+pub fn is_own_process_window(hwnd: isize) -> bool {
+    if hwnd == 0 {
+        return false;
+    }
+    let address = format!("0x{hwnd:x}");
+    hypr_json(&["clients", "-j"])
+        .and_then(|clients| {
+            clients.as_array()?.iter().find_map(|c| {
+                (c.get("address")?.as_str()? == address).then(|| c.get("pid")?.as_i64())?
+            })
+        })
+        .is_some_and(|pid| pid == std::process::id() as i64)
 }
 
 /// Rough bucket for the statistics view.
@@ -193,6 +276,10 @@ pub fn app_category(process_name: &str, title: &str) -> &'static str {
         "zed editor.exe",
         "wezterm-gui.exe",
         "kitty.exe",
+        "ghostty.exe",
+        "foot.exe",
+        "konsole.exe",
+        "gnome-terminal-server.exe",
         "tabby.exe",
         "hyper.exe",
         "mintty.exe",

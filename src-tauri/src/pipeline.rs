@@ -269,6 +269,9 @@ pub fn init(handle: AppHandle) {
     };
     if let Err(e) = crate::hotkey::start(config, on_hotkey) {
         log::error!("the keyboard hook could not be installed: {e}");
+        #[cfg(target_os = "linux")]
+        toast("error", &e);
+        #[cfg(not(target_os = "linux"))]
         toast("error", "The keyboard hook could not be installed. Hotkeys will not work.");
     }
 }

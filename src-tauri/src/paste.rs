@@ -323,25 +323,127 @@ mod tests {
     }
 }
 
-// ------------------------------------------------------------ non-Windows
+// ------------------------------------------------------------ Linux (Hyprland)
+//
+// Wayland has no SendInput: the clipboard goes through wl-clipboard and the paste
+// shortcut through Hyprland's send_shortcut, aimed at the active window. Terminals
+// paste with Ctrl+Shift+V, a raw Ctrl+V would land in the shell as a control code.
 
-#[cfg(not(windows))]
+#[cfg(target_os = "linux")]
+const RESTORE_DELAY_MS: u64 = 400;
+
+#[cfg(target_os = "linux")]
+fn wl_paste(primary: bool) -> Option<String> {
+    use std::process::Command;
+    let mut list = Command::new("wl-paste");
+    list.arg("--list-types");
+    if primary {
+        list.arg("--primary");
+    }
+    let types = list.output().ok()?;
+    let types = String::from_utf8_lossy(&types.stdout);
+    let kind = ["text/plain;charset=utf-8", "UTF8_STRING", "text/plain"]
+        .into_iter()
+        .find(|t| types.lines().any(|line| line.trim() == *t))?;
+    let mut read = Command::new("wl-paste");
+    read.args(["--no-newline", "--type", kind]);
+    if primary {
+        read.arg("--primary");
+    }
+    let out = read.output().ok()?;
+    if !out.status.success() {
+        return None;
+    }
+    String::from_utf8(out.stdout).ok()
+}
+
+#[cfg(target_os = "linux")]
 pub fn get_clipboard_text() -> Option<String> {
-    None
+    wl_paste(false)
 }
-#[cfg(not(windows))]
-pub fn set_clipboard(_text: &str) -> Result<(), String> {
-    Err("Clipboard is only implemented on Windows.".to_string())
+
+#[cfg(target_os = "linux")]
+pub fn set_clipboard(text: &str) -> Result<(), String> {
+    use std::io::Write;
+    use std::process::{Command, Stdio};
+    let mut child = Command::new("wl-copy")
+        .args(["--type", "text/plain;charset=utf-8"])
+        .stdin(Stdio::piped())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn()
+        .map_err(|e| format!("wl-copy could not start (install wl-clipboard): {e}"))?;
+    child
+        .stdin
+        .take()
+        .ok_or("wl-copy has no input")?
+        .write_all(text.as_bytes())
+        .map_err(|e| format!("Could not write to the clipboard: {e}"))?;
+    // wl-copy forks a server that serves the selection; the parent exits right away.
+    let status = child.wait().map_err(|e| e.to_string())?;
+    if status.success() {
+        Ok(())
+    } else {
+        Err("wl-copy failed.".to_string())
+    }
 }
-#[cfg(not(windows))]
-pub fn paste_text(_text: &str) -> Result<(), String> {
-    Err("Pasting is only implemented on Windows.".to_string())
+
+#[cfg(target_os = "linux")]
+fn send_shortcut(mods: &str, key: &str) -> Result<(), String> {
+    let window = crate::winutil::foreground_app();
+    if window.hwnd == 0 {
+        return Err("No focused window to paste into.".to_string());
+    }
+    let mods = if mods == "CTRL" && crate::winutil::is_terminal(&window.process_name) {
+        "CTRL SHIFT"
+    } else {
+        mods
+    };
+    let lua = format!(
+        "hl.dsp.send_shortcut({{ mods = \"{mods}\", key = \"{key}\", window = \"address:0x{:x}\" }})",
+        window.hwnd
+    );
+    let out = std::process::Command::new("hyprctl")
+        .args(["dispatch", &lua])
+        .output()
+        .map_err(|e| format!("hyprctl could not start: {e}"))?;
+    let answer = String::from_utf8_lossy(&out.stdout).to_lowercase();
+    if out.status.success() && answer.contains("ok") {
+        Ok(())
+    } else {
+        Err(format!("Hyprland refused the paste shortcut: {}", answer.trim()))
+    }
 }
-#[cfg(not(windows))]
-pub fn type_text(_text: &str) -> Result<(), String> {
-    Err("Typing is only implemented on Windows.".to_string())
+
+#[cfg(target_os = "linux")]
+pub fn paste_text(text: &str) -> Result<(), String> {
+    if text.is_empty() {
+        return Ok(());
+    }
+    let previous = get_clipboard_text();
+    set_clipboard(text)?;
+    std::thread::sleep(std::time::Duration::from_millis(50));
+    send_shortcut("CTRL", "V")?;
+    std::thread::spawn(move || {
+        std::thread::sleep(std::time::Duration::from_millis(RESTORE_DELAY_MS));
+        if let Some(old) = previous {
+            if !old.is_empty() {
+                let _ = set_clipboard(&old);
+            }
+        }
+    });
+    Ok(())
 }
-#[cfg(not(windows))]
+
+/// Wayland offers no generic Unicode typing without extra tools, so typing
+/// falls back to the same clipboard paste. Callers only use it as a fallback.
+#[cfg(target_os = "linux")]
+pub fn type_text(text: &str) -> Result<(), String> {
+    paste_text(text)
+}
+
+/// The selected text without touching the clipboard: Wayland's primary selection.
+#[cfg(target_os = "linux")]
 pub fn copy_selection() -> Option<String> {
-    None
+    wl_paste(true).filter(|s| !s.trim().is_empty())
 }

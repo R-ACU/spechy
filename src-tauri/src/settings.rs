@@ -10,9 +10,16 @@ static CACHE: RwLock<Option<Settings>> = RwLock::new(None);
 
 /// `%APPDATA%\com.remo.spechy`, created if missing.
 pub fn data_dir() -> PathBuf {
+    #[cfg(windows)]
     let base = std::env::var("APPDATA")
         .map(PathBuf::from)
         .unwrap_or_else(|_| std::env::temp_dir());
+    // Linux: ~/.local/share/com.remo.spechy, never /tmp (wiped on reboot).
+    #[cfg(not(windows))]
+    let base = std::env::var_os("XDG_DATA_HOME")
+        .map(PathBuf::from)
+        .or_else(|| std::env::var_os("HOME").map(|h| PathBuf::from(h).join(".local/share")))
+        .unwrap_or_else(std::env::temp_dir);
     let dir = base.join("com.remo.spechy");
     if !dir.exists() {
         let _ = fs::create_dir_all(&dir);

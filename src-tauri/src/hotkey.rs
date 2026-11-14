@@ -735,34 +735,16 @@ fn system_key_down(vk: u16) -> bool {
     }
 }
 
-// ------------------------------------------------------------------ start
+// ------------------------------------------------------------------ worker
 
-#[cfg(windows)]
-pub fn start(
-    config: HotkeyConfig,
-    on_event: impl Fn(HotkeyEvent) + Send + 'static,
-) -> Result<(), String> {
+/// Worker thread: owns the user callback. Everything slow happens here.
+fn spawn_worker(on_event: impl Fn(HotkeyEvent) + Send + 'static) {
     use std::thread;
     use std::time::Duration;
-    use windows::Win32::Foundation::HINSTANCE;
-    use windows::Win32::System::LibraryLoader::GetModuleHandleW;
-    use windows::Win32::System::Threading::{
-        GetCurrentThread, SetThreadPriority, THREAD_PRIORITY_TIME_CRITICAL,
-    };
-    use windows::Win32::UI::WindowsAndMessaging::{
-        DispatchMessageW, GetMessageW, SetTimer, SetWindowsHookExW, TranslateMessage,
-        UnhookWindowsHookEx, MSG, WH_KEYBOARD_LL, WM_TIMER,
-    };
-
-    apply_config(&config);
-    if STARTED.swap(true, Ordering::SeqCst) {
-        return Ok(());
-    }
 
     let (sender, receiver) = mpsc::channel::<Message>();
     let _ = SENDER.set(Mutex::new(Some(sender)));
 
-    // Worker thread: owns the user callback. Everything slow happens here.
     thread::spawn(move || {
         for message in receiver {
             log::info!("hotkey: {message:?}");
@@ -794,6 +776,32 @@ pub fn start(
             }
         }
     });
+}
+
+// ------------------------------------------------------------------ start
+
+#[cfg(windows)]
+pub fn start(
+    config: HotkeyConfig,
+    on_event: impl Fn(HotkeyEvent) + Send + 'static,
+) -> Result<(), String> {
+    use std::thread;
+    use windows::Win32::Foundation::HINSTANCE;
+    use windows::Win32::System::LibraryLoader::GetModuleHandleW;
+    use windows::Win32::System::Threading::{
+        GetCurrentThread, SetThreadPriority, THREAD_PRIORITY_TIME_CRITICAL,
+    };
+    use windows::Win32::UI::WindowsAndMessaging::{
+        DispatchMessageW, GetMessageW, SetTimer, SetWindowsHookExW, TranslateMessage,
+        UnhookWindowsHookEx, MSG, WH_KEYBOARD_LL, WM_TIMER,
+    };
+
+    apply_config(&config);
+    if STARTED.swap(true, Ordering::SeqCst) {
+        return Ok(());
+    }
+
+    spawn_worker(on_event);
 
     let (ready_tx, ready_rx) = mpsc::channel();
     thread::spawn(move || unsafe {
@@ -860,13 +868,267 @@ pub fn start(
     }
 }
 
-#[cfg(not(windows))]
+// ------------------------------------------------------------------ Linux (evdev)
+//
+// Wayland gives no app a global key hook, so Spechy reads the keyboards'
+// /dev/input/event* nodes directly (needs the `input` group). One reader thread
+// per keyboard feeds the same Engine; a scanner thread picks up hot-plugged
+// keyboards and reconciles the held keys with the kernel's key state (EVIOCGKEY),
+// so a missed key-up cannot leave a chord stuck. Keys cannot be swallowed here:
+// the compositor sees every chord, so it must not bind Spechy's chords itself.
+
+#[cfg(target_os = "linux")]
+mod evdev {
+    use std::collections::{BTreeMap, BTreeSet};
+    use std::fs::File;
+    use std::io::Read;
+    use std::os::fd::AsRawFd;
+    use std::path::PathBuf;
+    use std::sync::{Mutex, OnceLock};
+
+    pub const EV_KEY: u16 = 1;
+    const KEY_MAX: usize = 0x2ff;
+
+    extern "C" {
+        fn ioctl(fd: i32, request: u64, ...) -> i32;
+    }
+
+    /// _IOC(_IOC_READ, 'E', nr, len)
+    fn eviocg(nr: u64, len: usize) -> u64 {
+        (2u64 << 30) | ((len as u64) << 16) | ((b'E' as u64) << 8) | nr
+    }
+
+    /// Open keyboards by path; the reader threads hold their own handle.
+    pub fn open_devices() -> &'static Mutex<BTreeMap<PathBuf, File>> {
+        static DEVICES: OnceLock<Mutex<BTreeMap<PathBuf, File>>> = OnceLock::new();
+        DEVICES.get_or_init(|| Mutex::new(BTreeMap::new()))
+    }
+
+    /// A device counts as keyboard when it reports the letter keys and Space.
+    pub fn is_keyboard(file: &File) -> bool {
+        let mut bits = [0u8; KEY_MAX / 8 + 1];
+        // EVIOCGBIT(EV_KEY, len) = nr 0x20 + EV_KEY
+        let rc = unsafe { ioctl(file.as_raw_fd(), eviocg(0x20 + EV_KEY as u64, bits.len()), bits.as_mut_ptr()) };
+        if rc < 0 {
+            return false;
+        }
+        let has = |code: usize| bits[code / 8] & (1 << (code % 8)) != 0;
+        [30usize, 44, 57, 29].iter().all(|c| has(*c)) // A, Z, Space, Left Ctrl
+    }
+
+    /// Linux key codes currently held on any open keyboard, by the kernel's own state.
+    pub fn held_codes() -> Option<BTreeSet<u16>> {
+        let devices = open_devices().lock().ok()?;
+        let mut held = BTreeSet::new();
+        for file in devices.values() {
+            let mut bits = [0u8; KEY_MAX / 8 + 1];
+            // EVIOCGKEY(len) = nr 0x18
+            let rc = unsafe { ioctl(file.as_raw_fd(), eviocg(0x18, bits.len()), bits.as_mut_ptr()) };
+            if rc < 0 {
+                continue;
+            }
+            for (i, byte) in bits.iter().enumerate() {
+                for bit in 0..8 {
+                    if byte & (1 << bit) != 0 {
+                        held.insert((i * 8 + bit) as u16);
+                    }
+                }
+            }
+        }
+        Some(held)
+    }
+
+    /// Blocks on one device and calls `on_key(code, value)` per key event
+    /// (value 0 up, 1 down, 2 repeat). Returns when the device goes away.
+    pub fn read_loop(mut file: File, on_key: impl Fn(u16, i32)) {
+        // struct input_event on 64-bit: timeval (16) + type u16 + code u16 + value i32
+        let mut buffer = [0u8; 24 * 64];
+        loop {
+            let n = match file.read(&mut buffer) {
+                Ok(0) | Err(_) => return,
+                Ok(n) => n,
+            };
+            for event in buffer[..n].chunks_exact(24) {
+                let kind = u16::from_ne_bytes([event[16], event[17]]);
+                if kind != EV_KEY {
+                    continue;
+                }
+                let code = u16::from_ne_bytes([event[18], event[19]]);
+                let value = i32::from_ne_bytes([event[20], event[21], event[22], event[23]]);
+                on_key(code, value);
+            }
+        }
+    }
+
+    /// German-style layouts swap Y and Z, Windows virtual keys follow the layout.
+    pub fn qwertz() -> bool {
+        static QWERTZ: OnceLock<bool> = OnceLock::new();
+        *QWERTZ.get_or_init(|| {
+            crate::winutil::hypr_json(&["devices", "-j"])
+                .and_then(|d| {
+                    let keyboards = d.get("keyboards")?.as_array()?.clone();
+                    keyboards.iter().find_map(|k| {
+                        let layout = k.get("layout")?.as_str()?.to_lowercase();
+                        Some(["de", "at", "ch", "cz", "hu", "sk", "si", "hr"].iter().any(|l| layout.starts_with(l)))
+                    })
+                })
+                .unwrap_or(false)
+        })
+    }
+
+    /// Linux key code -> Windows virtual key (left/right variants kept, `canonical` folds them).
+    /// Keys without a counterpart get a private code so they still count as "another key".
+    pub fn to_vk(code: u16) -> u32 {
+        const LETTERS: [(u16, u8); 26] = [
+            (16, b'Q'), (17, b'W'), (18, b'E'), (19, b'R'), (20, b'T'), (21, b'Y'), (22, b'U'), (23, b'I'),
+            (24, b'O'), (25, b'P'), (30, b'A'), (31, b'S'), (32, b'D'), (33, b'F'), (34, b'G'), (35, b'H'),
+            (36, b'J'), (37, b'K'), (38, b'L'), (44, b'Z'), (45, b'X'), (46, b'C'), (47, b'V'), (48, b'B'),
+            (49, b'N'), (50, b'M'),
+        ];
+        if let Some((_, letter)) = LETTERS.iter().find(|(c, _)| *c == code) {
+            let letter = match (*letter, qwertz()) {
+                (b'Y', true) => b'Z',
+                (b'Z', true) => b'Y',
+                (l, _) => l,
+            };
+            return letter as u32;
+        }
+        match code {
+            1 => 0x1B,
+            2..=10 => 0x31 + (code as u32 - 2), // 1..9
+            11 => 0x30,
+            14 => 0x08,
+            15 => 0x09,
+            28 | 96 => 0x0D,
+            29 => 0xA2,
+            97 => 0xA3,
+            42 => 0xA0,
+            54 => 0xA1,
+            56 => 0xA4,
+            100 => 0xA5,
+            125 => 0x5B,
+            126 => 0x5C,
+            57 => 0x20,
+            58 => 0x14,
+            59..=68 => 0x70 + (code as u32 - 59), // F1..F10
+            87 => 0x7A,
+            88 => 0x7B,
+            other => 0x1000 + other as u32,
+        }
+    }
+}
+
+#[cfg(target_os = "linux")]
+fn linux_engine() -> &'static Mutex<Engine> {
+    static ENGINE: OnceLock<Mutex<Engine>> = OnceLock::new();
+    ENGINE.get_or_init(|| Mutex::new(Engine::default()))
+}
+
+#[cfg(target_os = "linux")]
+fn linux_feed(f: impl FnOnce(&mut Engine) -> Decision) {
+    let decision = {
+        let Ok(mut engine) = linux_engine().lock() else { return };
+        let version = CONFIG_VERSION.load(Ordering::SeqCst);
+        if engine.config_version != version {
+            if let Ok(chords) = config_cell().read() {
+                engine.chords = chords.clone();
+                engine.config_version = version;
+            }
+        }
+        let decision = f(&mut engine);
+        engine.publish();
+        decision
+    };
+    dispatch(decision.messages);
+}
+
+#[cfg(target_os = "linux")]
+fn linux_scan() -> usize {
+    use std::fs::File;
+    let Ok(entries) = std::fs::read_dir("/dev/input") else { return 0 };
+    let mut denied = 0;
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if !path.file_name().is_some_and(|n| n.to_string_lossy().starts_with("event")) {
+            continue;
+        }
+        if evdev::open_devices().lock().map(|d| d.contains_key(&path)).unwrap_or(true) {
+            continue;
+        }
+        let file = match File::open(&path) {
+            Ok(file) => file,
+            Err(e) => {
+                if e.kind() == std::io::ErrorKind::PermissionDenied {
+                    denied += 1;
+                }
+                continue;
+            }
+        };
+        if !evdev::is_keyboard(&file) {
+            continue;
+        }
+        let Ok(reader) = file.try_clone() else { continue };
+        if let Ok(mut devices) = evdev::open_devices().lock() {
+            devices.insert(path.clone(), file);
+        }
+        log::info!("hotkey: listening on {}", path.display());
+        std::thread::spawn(move || {
+            evdev::read_loop(reader, |code, value| {
+                let vk = canonical(evdev::to_vk(code));
+                let env = current_env();
+                linux_feed(|engine| engine.on_key(vk, value != 0, false, env));
+            });
+            log::info!("hotkey: {} went away", path.display());
+            if let Ok(mut devices) = evdev::open_devices().lock() {
+                devices.remove(&path);
+            }
+        });
+    }
+    denied
+}
+
+#[cfg(target_os = "linux")]
 pub fn start(
     config: HotkeyConfig,
-    _on_event: impl Fn(HotkeyEvent) + Send + 'static,
+    on_event: impl Fn(HotkeyEvent) + Send + 'static,
 ) -> Result<(), String> {
+    use std::time::Duration;
+
     apply_config(&config);
-    Err("Global hotkeys are only implemented on Windows.".to_string())
+    if STARTED.swap(true, Ordering::SeqCst) {
+        return Ok(());
+    }
+    spawn_worker(on_event);
+
+    let denied = linux_scan();
+    let found = evdev::open_devices().lock().map(|d| d.len()).unwrap_or(0);
+
+    std::thread::spawn(|| {
+        let mut ticks: u32 = 0;
+        loop {
+            std::thread::sleep(Duration::from_millis(TICK_MS as u64));
+            ticks = ticks.wrapping_add(1);
+            if let Some(held) = evdev::held_codes() {
+                let held_vks: std::collections::BTreeSet<u16> =
+                    held.iter().map(|c| canonical(evdev::to_vk(*c))).collect();
+                let env = current_env();
+                linux_feed(|engine| engine.reconcile(|vk| held_vks.contains(&vk), env));
+            }
+            // Keyboards plugged in or reconnected later (Bluetooth, KVM switch).
+            if ticks.is_multiple_of(8) {
+                linux_scan();
+            }
+        }
+    });
+
+    if found == 0 {
+        return Err(if denied > 0 {
+            "Spechy cannot read the keyboard. Add yourself to the input group (sudo usermod -aG input $USER) and log in again.".to_string()
+        } else {
+            "No keyboard found for the global shortcuts.".to_string()
+        });
+    }
+    Ok(())
 }
 
 // ------------------------------------------------------------------ tests

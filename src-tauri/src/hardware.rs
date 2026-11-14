@@ -41,7 +41,15 @@ fn cpu_name() -> String {
 
 #[cfg(not(windows))]
 fn cpu_name() -> String {
-    std::env::var("PROCESSOR_IDENTIFIER").unwrap_or_default()
+    std::fs::read_to_string("/proc/cpuinfo")
+        .ok()
+        .and_then(|info| {
+            info.lines()
+                .find(|l| l.starts_with("model name"))
+                .and_then(|l| l.split_once(':'))
+                .map(|(_, name)| name.trim().to_string())
+        })
+        .unwrap_or_default()
 }
 
 // ---------- RAM ----------
@@ -62,7 +70,16 @@ fn memory_mb() -> (u64, u64) {
 
 #[cfg(not(windows))]
 fn memory_mb() -> (u64, u64) {
-    (0, 0)
+    let info = std::fs::read_to_string("/proc/meminfo").unwrap_or_default();
+    let field = |name: &str| {
+        info.lines()
+            .find(|l| l.starts_with(name))
+            .and_then(|l| l.split_whitespace().nth(1))
+            .and_then(|kb| kb.parse::<u64>().ok())
+            .unwrap_or(0)
+            / 1024
+    };
+    (field("MemTotal:"), field("MemAvailable:"))
 }
 
 // ---------- GPU ----------
@@ -110,9 +127,46 @@ fn gpu_list() -> Vec<GpuInfo> {
     gpus
 }
 
+/// NVIDIA through nvidia-smi; AMD and Intel through the DRM sysfs entries
+/// (`mem_info_vram_total` exists for dedicated AMD cards only).
 #[cfg(not(windows))]
 fn gpu_list() -> Vec<GpuInfo> {
-    Vec::new()
+    let mut gpus = Vec::new();
+    if let Ok(out) = std::process::Command::new("nvidia-smi")
+        .args(["--query-gpu=name,memory.total", "--format=csv,noheader,nounits"])
+        .output()
+    {
+        for line in String::from_utf8_lossy(&out.stdout).lines() {
+            if let Some((name, mb)) = line.rsplit_once(',') {
+                let name = name.trim().to_string();
+                gpus.push(GpuInfo { vendor: vendor_of(&name), name, vram_mb: mb.trim().parse().unwrap_or(0) });
+            }
+        }
+    }
+    if let Ok(cards) = std::fs::read_dir("/sys/class/drm") {
+        for card in cards.flatten() {
+            let name = card.file_name().to_string_lossy().to_string();
+            if !name.starts_with("card") || name.contains('-') {
+                continue;
+            }
+            let device = card.path().join("device");
+            let vendor_id = std::fs::read_to_string(device.join("vendor")).unwrap_or_default();
+            let vendor = match vendor_id.trim() {
+                "0x1002" => "amd",
+                "0x8086" => "intel",
+                _ => continue, // NVIDIA came from nvidia-smi above
+            };
+            let vram_mb = std::fs::read_to_string(device.join("mem_info_vram_total"))
+                .ok()
+                .and_then(|b| b.trim().parse::<u64>().ok())
+                .unwrap_or(0)
+                / 1_048_576;
+            let label = if vendor == "amd" { "AMD Radeon" } else { "Intel Graphics" };
+            gpus.push(GpuInfo { vendor: vendor.into(), name: label.into(), vram_mb });
+        }
+    }
+    gpus.sort_by(|a, b| b.vram_mb.cmp(&a.vram_mb));
+    gpus
 }
 
 /// Windows stores the adapter memory either as a QWORD or as a legacy DWORD/BINARY.

@@ -106,7 +106,7 @@ pub fn remove_local_model(id: String) -> Result<Vec<LocalModelFit>, String> {
 pub fn open_models_dir() -> Result<(), String> {
     let dir = crate::local_models::models_dir();
     std::fs::create_dir_all(&dir).map_err(|e| format!("Could not create the models folder: {e}"))?;
-    std::process::Command::new("explorer")
+    std::process::Command::new(if cfg!(windows) { "explorer" } else { "xdg-open" })
         .arg(dir.as_os_str())
         .spawn()
         .map_err(|e| format!("Could not open the folder: {e}"))?;
@@ -447,7 +447,7 @@ pub fn get_data_dir() -> String {
 #[tauri::command]
 pub fn open_data_dir() -> Result<(), String> {
     let dir = crate::settings::data_dir();
-    std::process::Command::new("explorer")
+    std::process::Command::new(if cfg!(windows) { "explorer" } else { "xdg-open" })
         .arg(dir.as_os_str())
         .spawn()
         .map_err(|e| format!("Could not open the folder: {e}"))?;
@@ -464,19 +464,39 @@ pub fn open_url(url: String) -> Result<(), String> {
     if !(url.starts_with("https://") || url.starts_with("http://") || url.starts_with("mailto:")) {
         return Err("Only web links can be opened".into());
     }
-    use windows::core::PCWSTR;
-    use windows::Win32::UI::Shell::ShellExecuteW;
-    use windows::Win32::UI::WindowsAndMessaging::SW_SHOWNORMAL;
-    let wide: Vec<u16> = url.encode_utf16().chain(std::iter::once(0)).collect();
-    let result = unsafe { ShellExecuteW(None, windows::core::w!("open"), PCWSTR(wide.as_ptr()), None, None, SW_SHOWNORMAL) };
-    if result.0 as isize <= 32 { return Err("Could not open the link.".into()); }
-    Ok(())
+    #[cfg(windows)]
+    {
+        use windows::core::PCWSTR;
+        use windows::Win32::UI::Shell::ShellExecuteW;
+        use windows::Win32::UI::WindowsAndMessaging::SW_SHOWNORMAL;
+        let wide: Vec<u16> = url.encode_utf16().chain(std::iter::once(0)).collect();
+        let result = unsafe { ShellExecuteW(None, windows::core::w!("open"), PCWSTR(wide.as_ptr()), None, None, SW_SHOWNORMAL) };
+        if result.0 as isize <= 32 { return Err("Could not open the link.".into()); }
+        Ok(())
+    }
+    #[cfg(not(windows))]
+    {
+        std::process::Command::new("xdg-open")
+            .arg(&url)
+            .spawn()
+            .map(|_| ())
+            .map_err(|_| "Could not open the link.".into())
+    }
 }
 
 // ---------- Window ----------
 
 #[tauri::command]
 pub fn window_minimize(app: tauri::AppHandle) -> Result<(), String> {
+    // Hyprland ignores minimize requests. The desktop parks windows on the special
+    // workspace "minimized" instead (projects/linux/hypr/config/desktops.lua).
+    #[cfg(target_os = "linux")]
+    if let Some(addr) = crate::winutil::own_window_address() {
+        let lua = format!("hl.dsp.window.move({{ workspace = \"special:minimized\", follow = false, window = \"address:{addr}\" }})");
+        if crate::winutil::hypr_dispatch(&lua) {
+            return Ok(());
+        }
+    }
     if let Some(w) = app.get_webview_window("main") {
         w.minimize().map_err(|e| e.to_string())?;
     }
@@ -485,6 +505,14 @@ pub fn window_minimize(app: tauri::AppHandle) -> Result<(), String> {
 
 #[tauri::command]
 pub fn window_toggle_maximize(app: tauri::AppHandle) -> Result<(), String> {
+    // Floating windows on Hyprland maximize through its fullscreen mode 1 (keeps the bar).
+    #[cfg(target_os = "linux")]
+    if let Some(addr) = crate::winutil::own_window_address() {
+        let lua = format!("hl.dsp.window.fullscreen({{ mode = 1, window = \"address:{addr}\" }})");
+        if crate::winutil::hypr_dispatch(&lua) {
+            return Ok(());
+        }
+    }
     if let Some(w) = app.get_webview_window("main") {
         let maximized = w.is_maximized().map_err(|e| e.to_string())?;
         if maximized {
