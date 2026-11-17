@@ -1,5 +1,6 @@
 //! Spechy: voice dictation for Windows. Entry point of the library crate.
 
+mod snake;
 pub mod audio;
 pub mod autostart;
 pub mod commands;
@@ -39,6 +40,8 @@ pub fn run() {
             tray::show_main_window(app);
         }))
         .invoke_handler(tauri::generate_handler![
+            snake::snake_start,
+            snake::snake_stop,
             commands::get_settings,
             commands::suspend_hotkeys,
             commands::set_settings,

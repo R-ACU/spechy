@@ -13,6 +13,7 @@ import Dictionary from "./views/Dictionary";
 import Snippets from "./views/Snippets";
 import Style from "./views/Style";
 import Transforms from "./views/Transforms";
+import Snake from './views/Snake';
 import Scratchpad from "./views/Scratchpad";
 import Help from "./views/Help";
 import SettingsView from "./views/settings/Settings";
@@ -180,6 +181,7 @@ export default function App() {
       case "snippets": return <Snippets />;
       case "style": return <Style />;
       case "transforms": return <Transforms />;
+      case "snake": return <Snake />;
       case "scratchpad": return <Scratchpad />;
       case "help": return <Help />;
       default: return <Home />;
