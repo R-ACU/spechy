@@ -1,4 +1,4 @@
-import { Layers, AudioLines, BarChart3, BookMarked, CircleHelp, LayoutGrid, NotebookPen, Scissors, Settings, Type, WandSparkles } from "lucide-react";
+import { AudioLines, BarChart3, BookMarked, CircleHelp, Gamepad2, LayoutGrid, Scissors, Settings, Type } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
 import { t, useStore } from "../lib/store";
 
@@ -8,9 +8,7 @@ const main: { id: string; label: string; Icon: LucideIcon }[] = [
   { id: "dictionary", label: "Dictionary", Icon: BookMarked },
   { id: "snippets", label: "Snippets", Icon: Scissors },
   { id: "style", label: "Style", Icon: Type },
-  { id: "transforms", label: "Transforms", Icon: WandSparkles },
-  { id: "snake", label: "Voice Snake", Icon: Layers },
-  { id: "scratchpad", label: "Scratchpad", Icon: NotebookPen },
+  { id: "games", label: "Games", Icon: Gamepad2 },
 ];
 
 const bottom: { id: string; label: string; Icon: LucideIcon }[] = [

@@ -13,7 +13,7 @@ use crate::audio::Recorder;
 use crate::failed::{Part, Pending};
 use crate::model::{
     new_id, now_ms, DictationMode, DictationState, FailedDictation, HistoryEntry, Phase, Toast, EV_HISTORY_ADDED,
-    EV_SCRATCHPAD, EV_STATE, EV_TOAST,
+    EV_STATE, EV_TOAST,
 };
 use crate::pill::PillState;
 use crate::sound::SoundKind;
@@ -1059,7 +1059,7 @@ fn back_to_idle(generation: u64) {
     emit_state(&snapshot);
 }
 
-/// Polish, paste (or scratchpad or clipboard) and history for a finished transcript.
+/// Polish, paste (or clipboard) and history for a finished transcript.
 fn deliver(raw: &str, settings: &crate::model::Settings, delivery: Delivery) -> Result<(), String> {
     let raw = raw.trim().to_string();
     if is_cancelled(delivery.generation) {
@@ -1113,23 +1113,12 @@ fn deliver(raw: &str, settings: &crate::model::Settings, delivery: Delivery) -> 
         return Ok(());
     }
 
-    // 3) Deliver: scratchpad when pinned, otherwise the app we recorded from.
-    // Spechy's own window is a normal target too (onboarding practice box, scratchpad view).
-    let to_scratchpad = settings.scratchpad_pinned;
-
-    if to_scratchpad {
-        let existing = crate::db::get_scratchpad().unwrap_or_default();
-        let combined = if existing.trim().is_empty() {
-            text.clone()
-        } else {
-            format!("{}\n\n{}", existing.trim_end(), text)
-        };
-        crate::db::set_scratchpad(&combined)?;
-        if let Some(app) = app() {
-            let _ = app.emit(EV_SCRATCHPAD, combined);
-        }
-    } else if delivery.target.is_some_and(crate::winutil::is_own_process_window) {
-        // Spechy's own window (scratchpad, onboarding practice box): moving the
+    // 3) Deliver to the app we recorded from. The scratchpad page is gone, so the
+    // old `scratchpad_pinned` setting is ignored: a pinned value left over from an
+    // older version must never swallow dictations into a page nobody can open.
+    // Spechy's own window is a normal target too (onboarding practice box).
+    if delivery.target.is_some_and(crate::winutil::is_own_process_window) {
+        // Spechy's own window (onboarding practice box, any text field): moving the
         // focus to the top-level window and sending Ctrl+V loses the WebView's
         // text field, so the page inserts the text itself.
         insert_into_own_window(&text)?;
@@ -1156,8 +1145,8 @@ fn deliver(raw: &str, settings: &crate::model::Settings, delivery: Delivery) -> 
         created_at: now_ms(),
         text: text.clone(),
         raw_text: raw,
-        app_name: if to_scratchpad { "Spechy".to_string() } else { delivery.app_name },
-        app_title: if to_scratchpad { "Scratchpad".to_string() } else { delivery.app_title },
+        app_name: delivery.app_name,
+        app_title: delivery.app_title,
         duration_ms: delivery.duration_ms,
         latency_ms,
         word_count: text.split_whitespace().count() as i64,

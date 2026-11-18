@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { isTauri } from "@tauri-apps/api/core";
 import { api, events, type DictationState, type InsertText, type Settings, type Toast } from "./lib/ipc";
 import { deliverDictation, trackFocusedField } from "./lib/insertText";
@@ -12,56 +12,16 @@ import Insights from "./views/Insights";
 import Dictionary from "./views/Dictionary";
 import Snippets from "./views/Snippets";
 import Style from "./views/Style";
-import Transforms from "./views/Transforms";
-import Snake from './views/Snake';
-import Scratchpad from "./views/Scratchpad";
 import Help from "./views/Help";
 import SettingsView from "./views/settings/Settings";
 import Onboarding from "./views/Onboarding";
+import { useTheme } from "./lib/theme";
+import ThemeLayer from "./themes/ThemeLayer";
+
+// Games are loaded on demand so the main bundle stays small.
+const Games = lazy(() => import("./views/games/Games"));
 
 const idleState: DictationState = { phase: "idle", mode: "push-to-talk", liveText: "", level: 0, message: "", startedAtMs: 0 };
-
-// ---------- Theme ----------
-type ThemeChoice = Settings["theme"];
-/** Last chosen theme, cached so the very first paint already has the right ground color. */
-const THEME_KEY = "spechy.theme";
-
-function prefersDark(): boolean {
-  return typeof window !== "undefined" && typeof window.matchMedia === "function" && window.matchMedia("(prefers-color-scheme: dark)").matches;
-}
-
-function cachedTheme(): ThemeChoice {
-  try {
-    const v = localStorage.getItem(THEME_KEY);
-    if (v === "system" || v === "light" || v === "dark") return v;
-  } catch {
-    /* storage blocked: fall through to system */
-  }
-  return "system";
-}
-
-/** Resolve the choice and stamp it on <html>; color-scheme keeps native scrollbars and inputs in step. */
-function applyTheme(choice: ThemeChoice, systemDark: boolean): void {
-  const dark = choice === "dark" || (choice === "system" && systemDark);
-  const root = document.documentElement;
-  root.setAttribute("data-theme", dark ? "dark" : "light");
-  root.style.colorScheme = dark ? "dark" : "light";
-}
-
-if (typeof document !== "undefined") applyTheme(cachedTheme(), prefersDark());
-
-/** Keep <html> in sync with settings.theme, following Windows while the choice is "system". */
-function useTheme(choice: ThemeChoice): void {
-  useEffect(() => {
-    try { localStorage.setItem(THEME_KEY, choice); } catch { /* storage blocked */ }
-    const mq = typeof window.matchMedia === "function" ? window.matchMedia("(prefers-color-scheme: dark)") : null;
-    const sync = () => applyTheme(choice, !!mq?.matches);
-    sync();
-    if (!mq || choice !== "system") return;
-    mq.addEventListener("change", sync);
-    return () => mq.removeEventListener("change", sync);
-  }, [choice]);
-}
 
 /** Subscribe to a backend event; no-op when the Tauri bridge is missing (plain browser). */
 function useEvent<T>(sub: (cb: (v: T) => void) => Promise<() => void>, cb: (v: T) => void) {
@@ -180,9 +140,7 @@ export default function App() {
       case "dictionary": return <Dictionary />;
       case "snippets": return <Snippets />;
       case "style": return <Style />;
-      case "transforms": return <Transforms />;
-      case "snake": return <Snake />;
-      case "scratchpad": return <Scratchpad />;
+      case "games": return <Suspense fallback={null}><Games /></Suspense>;
       case "help": return <Help />;
       default: return <Home />;
     }
@@ -190,6 +148,7 @@ export default function App() {
 
   return (
     <StoreContext.Provider value={store}>
+      <ThemeLayer theme={settings.theme} />
       <div className={`app ${MOCK ? "mock" : ""}`}>
         {!settings.onboarded ? (
           <Onboarding />

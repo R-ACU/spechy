@@ -1,0 +1,233 @@
+/* Extra themes ("skins") on top of the light and dark base palettes in styles.css.
+   src/lib/theme.ts stamps <html data-theme="light|dark" data-skin="<id>">.
+   Selectors use :root[data-theme][data-skin=...] so they beat :root[data-theme="dark"]
+   no matter in which order the stylesheets end up in the bundle.
+   .th-preview[data-skin=...] scopes the same tokens onto the small previews in Settings > Themes.
+   Hex values live only in the token blocks here; every rule below reads tokens. */
+
+:root {
+  --font-mono: "Cascadia Mono", "JetBrains Mono", "SF Mono", Consolas, "DejaVu Sans Mono", ui-monospace, monospace;
+  --ease-out-strong: cubic-bezier(0.23, 1, 0.32, 1);
+}
+
+/* ------------------------------------------------------------------ preview copies of the base palettes
+   (subset of styles.css, only what the previews draw; keep in step when the base palettes change) */
+.th-preview { --skin-content: initial; --skin-panel: initial; --skin-glyph: initial; }
+.th-preview[data-skin="light"] {
+  --bg: #f3f1ee; --surface: #fbfaf8; --surface-2: #f4f2ef; --surface-3: #ebe8e3;
+  --border: #e6e2dc; --text: #1c1b19; --text-2: #5c5955; --text-3: #8c8883;
+  --accent: #7c3aed; --teal-700: #2c7a70;
+}
+.th-preview[data-skin="dark"] {
+  --bg: #141311; --surface: #1c1b19; --surface-2: #242220; --surface-3: #2c2a27;
+  --border: #2e2c29; --text: #f2efea; --text-2: #b3aea6; --text-3: #7c7871;
+  --accent: #9f75ff; --teal-700: #3f9f90;
+}
+
+/* ------------------------------------------------------------------ ASCII (Nova post: faint glyph waves on near black) */
+:root[data-theme][data-skin="ascii"],
+.th-preview[data-skin="ascii"] {
+  --bg: #0b0b0b;
+  --surface: #121212;
+  --surface-2: #181818;
+  --surface-3: #212121;
+  --border: #242424;
+  --border-strong: #303030;
+  --text: #ececec;
+  --text-2: #a9a9a9;
+  --text-3: #7c7c7c;
+  --accent: #4fd8a4;
+  --accent-soft: #15362a;
+  --ink: #ececec;
+  --ink-hover: #ffffff;
+  --ink-text: #0b0b0b;
+  --on-solid: #ffffff;
+  --on-teal: #06130e;
+  --danger: #f0736f;
+  --success: #4fd8a4;
+  --teal-900: #4fd8a4;
+  --teal-700: #36b384;
+  --teal-400: #26795b;
+  --teal-200: #173e30;
+  --teal-100: #0f2a20;
+  --field-bg: #141414;
+  --raised: #131313;
+  --menu-bg: #1c1c1c;
+  --scrim: rgba(0, 0, 0, 0.6);
+  --ring: rgba(236, 236, 236, 0.10);
+  --ring-strong: rgba(236, 236, 236, 0.20);
+  --toggle-off: #303030;
+  --toggle-knob: #ececec;
+  --btn-disabled: #303030;
+  --btn-disabled-text: #7c7c7c;
+  --shadow-1: 0 1px 2px rgba(0, 0, 0, 0.5);
+  --shadow-2: 0 8px 24px rgba(0, 0, 0, 0.6);
+  --shadow-3: 0 20px 60px rgba(0, 0, 0, 0.7);
+  /* content panel colour and glyph colour ("r g b") of the animated field, read by fieldBackdrop.ts */
+  --skin-panel: #0b0b0b;
+  --skin-glyph: 225 225 225;
+  --skin-content: transparent;
+}
+
+/* ------------------------------------------------------------------ Halftone (posts 2 and 3: cream on ink, one blue) */
+:root[data-theme][data-skin="halftone"],
+.th-preview[data-skin="halftone"] {
+  --bg: #0e0e0e;
+  --surface: #131313;
+  --surface-2: #1a1a19;
+  --surface-3: #242422;
+  --border: #252523;
+  --border-strong: #33332f;
+  --text: #ede8dd;
+  --text-2: #b3ada2;
+  --text-3: #858076;
+  --accent: #3b82f6;
+  --accent-soft: #15264a;
+  --ink: #ede8dd;
+  --ink-hover: #ffffff;
+  --ink-text: #0e0e0e;
+  --on-solid: #ffffff;
+  --on-teal: #ffffff;
+  --danger: #f0736f;
+  --success: #6ea8ff;
+  --teal-900: #8db9ff;
+  --teal-700: #3b82f6;
+  --teal-400: #2a5fb8;
+  --teal-200: #1a2f57;
+  --teal-100: #121d33;
+  --field-bg: #151515;
+  --raised: #141414;
+  --menu-bg: #1e1e1d;
+  --scrim: rgba(0, 0, 0, 0.6);
+  --ring: rgba(237, 232, 221, 0.10);
+  --ring-strong: rgba(237, 232, 221, 0.20);
+  --toggle-off: #33332f;
+  --toggle-knob: #ede8dd;
+  --btn-disabled: #33332f;
+  --btn-disabled-text: #858076;
+  --shadow-1: 0 1px 2px rgba(0, 0, 0, 0.5);
+  --shadow-2: 0 8px 24px rgba(0, 0, 0, 0.6);
+  --shadow-3: 0 20px 60px rgba(0, 0, 0, 0.7);
+  --skin-panel: #0e0e0e;
+  --skin-glyph: 237 232 221;
+  --skin-content: transparent;
+}
+
+/* ------------------------------------------------------------------ OLED (pure black, neutral greys) */
+:root[data-theme][data-skin="oled"],
+.th-preview[data-skin="oled"] {
+  --bg: #000000;
+  --surface: #0b0b0b;
+  --surface-2: #141414;
+  --surface-3: #1d1d1d;
+  --border: #1f1f1f;
+  --border-strong: #2c2c2c;
+  --text: #f4f4f4;
+  --text-2: #ababab;
+  --text-3: #7d7d7d;
+  --accent: #a78bfa;
+  --accent-soft: #2a2140;
+  --ink: #f4f4f4;
+  --ink-hover: #ffffff;
+  --ink-text: #000000;
+  --field-bg: #0f0f0f;
+  --raised: #0d0d0d;
+  --menu-bg: #191919;
+  --ring: rgba(244, 244, 244, 0.10);
+  --ring-strong: rgba(244, 244, 244, 0.20);
+  --toggle-off: #2c2c2c;
+  --toggle-knob: #f4f4f4;
+  --btn-disabled: #2c2c2c;
+  --btn-disabled-text: #7d7d7d;
+  --teal-700: #3f9f90;
+}
+
+/* ------------------------------------------------------------------ skin rules (tokens only)
+   Backdrop themes make the content panel transparent; ThemeLayer puts the animated field exactly
+   underneath it, so the navigation and title bar stay plain. Fonts never change with a theme. */
+/* No separate panel: the field runs from the navigation's edge to the window edges, under the title bar. */
+:root[data-skin="halftone"] .content,
+:root[data-skin="ascii"] .content { background: transparent; box-shadow: none; border-radius: 0; margin: 0; }
+:root[data-skin="halftone"] .titlebar,
+:root[data-skin="ascii"] .titlebar,
+:root[data-skin="halftone"] .sidebar,
+:root[data-skin="ascii"] .sidebar { background: transparent; }
+/* Selected and hovered navigation items let the field shimmer through instead of solid blocks. */
+:root[data-skin="halftone"] .nav-item.active,
+:root[data-skin="ascii"] .nav-item.active { background: color-mix(in srgb, var(--surface-3) 78%, transparent); }
+:root[data-skin="halftone"] .nav-item:not(.active):hover,
+:root[data-skin="ascii"] .nav-item:not(.active):hover { background: color-mix(in srgb, var(--surface-2) 70%, transparent); }
+/* The field canvas sits between the page ground (body) and the app: the app gets its own layer. */
+:root[data-skin="halftone"] .app,
+:root[data-skin="ascii"] .app { position: relative; z-index: 1; }
+
+/* ------------------------------------------------------------------ field canvas (ThemeLayer), placed over .content */
+.theme-backdrop {
+  position: fixed;
+  z-index: 0;
+  pointer-events: none;
+  animation: th-backdrop-in 900ms var(--ease-out-strong) both;
+}
+@keyframes th-backdrop-in { from { opacity: 0; } to { opacity: 1; } }
+
+/* ------------------------------------------------------------------ Settings > Themes */
+.th-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(196px, 1fr)); gap: 12px; }
+.th-card {
+  display: flex; flex-direction: column; gap: 10px; padding: 8px 8px 12px; border-radius: 14px; text-align: left;
+  color: var(--text); background: transparent; box-shadow: inset 0 0 0 1px transparent;
+  transition: background 140ms var(--ease-out-strong), box-shadow 140ms var(--ease-out-strong);
+}
+.th-card:hover { background: var(--surface-2); }
+.th-card[aria-checked="true"] { background: var(--surface-2); box-shadow: inset 0 0 0 1.5px var(--text-2); }
+.th-card:focus-visible { outline: 2px solid var(--text-3); outline-offset: 2px; }
+.th-card:active .th-preview-wrap { transform: scale(0.985); }
+.th-preview-wrap { position: relative; aspect-ratio: 16 / 10; border-radius: 9px; overflow: hidden; box-shadow: 0 0 0 1px var(--border); transition: transform 140ms var(--ease-out-strong); }
+.th-preview-wrap > .th-preview { position: absolute; inset: 0; }
+.th-preview-wrap > .th-preview + .th-preview { clip-path: polygon(62% 0, 100% 0, 100% 100%, 38% 100%); }
+.th-meta { padding: 0 4px; }
+.th-name-row { display: flex; align-items: center; gap: 8px; min-height: 20px; }
+.th-name { font-size: 14px; font-weight: 600; }
+.th-tag { font-size: 10.5px; font-weight: 600; letter-spacing: 0.08em; text-transform: uppercase; color: var(--text-3); }
+.th-check { margin-left: auto; color: var(--text); flex: none; }
+.th-line { font-size: 12.5px; color: var(--text-2); margin-top: 2px; line-height: 1.4; }
+.th-hint { font-size: 13px; color: var(--text-3); margin: 16px 4px 0; }
+
+/* the mini window inside a preview, drawn from that theme's own tokens */
+.th-preview { display: flex; gap: 5%; padding: 6% 5% 6% 4%; background-color: var(--bg); color: var(--text); overflow: hidden; }
+.th-pv-field {
+  position: absolute; inset: 0; margin: 0; font-family: var(--font-mono); font-size: 7px; line-height: 8px; letter-spacing: 0.5px;
+  white-space: pre; color: rgb(var(--skin-glyph, 255 255 255) / 0.3); pointer-events: none; overflow: hidden;
+}
+.th-pv-field.dots { font-size: 9px; line-height: 6px; letter-spacing: -1px; color: rgb(var(--skin-glyph, 255 255 255) / 0.28); }
+.th-pv-main > :not(.th-pv-field) { position: relative; }
+.th-pv-side { position: relative; flex: 0 0 24%; display: flex; flex-direction: column; gap: 6px; padding-top: 2px; }
+.th-pv-brand { height: 6px; width: 70%; border-radius: 3px; background: var(--text); margin-bottom: 4px; }
+.th-pv-nav { height: 9px; border-radius: 3px; display: flex; align-items: center; padding: 0 4px; }
+.th-pv-nav::after { content: ""; height: 3px; width: 70%; border-radius: 2px; background: var(--text-2); }
+.th-pv-nav.on { background: var(--surface-3); }
+.th-pv-main { position: relative; flex: 1; border-radius: 7px; overflow: hidden; background: var(--skin-panel, var(--surface)); box-shadow: inset 0 0 0 1px var(--border); padding: 9% 9%; display: flex; flex-direction: column; gap: 6px; }
+.th-pv-aa { font-size: 15px; font-weight: 600; line-height: 1; color: var(--text); }
+.th-pv-line { height: 3px; border-radius: 2px; background: var(--text-2); }
+.th-pv-line.faint { background: var(--text-3); }
+.th-pv-card { margin-top: auto; border-radius: 5px; background: var(--surface-2); box-shadow: inset 0 0 0 1px var(--border); padding: 6px; display: flex; flex-direction: column; gap: 5px; }
+.th-pv-bar { height: 4px; border-radius: 2px; background: var(--surface-3); overflow: hidden; }
+.th-pv-bar::after { content: ""; display: block; height: 100%; width: 62%; border-radius: 2px; background: var(--accent); }
+
+/* ------------------------------------------------------------------ switch moment (ThemeSwitch.tsx)
+   A veil in the current theme's colours (frozen on the element) fades in, the theme swaps underneath,
+   then the veil fades out into the new theme. Opacity and transform only; never a hard cut. */
+.tsw {
+  position: fixed; inset: 0; z-index: 400; display: flex; align-items: center; justify-content: center;
+  background-color: var(--bg); color: var(--text); opacity: 0; pointer-events: all;
+  transition: opacity 180ms var(--ease-out-strong);
+}
+.tsw.in, .tsw.swap { opacity: 1; }
+.tsw.out { opacity: 0; transition-duration: 240ms; }
+.tsw-box { display: flex; flex-direction: column; align-items: center; gap: 10px; font-family: var(--font-mono); transform: translateY(6px); opacity: 0; transition: transform 260ms var(--ease-out-strong), opacity 200ms var(--ease-out-strong); }
+.tsw.in .tsw-box, .tsw.swap .tsw-box { transform: none; opacity: 1; }
+.tsw.out .tsw-box { transform: translateY(-4px); opacity: 0; }
+.tsw-label { font-size: 10.5px; letter-spacing: 0.22em; text-transform: uppercase; color: var(--text-3); }
+.tsw-name { font-size: 22px; letter-spacing: 0.02em; white-space: pre; min-height: 28px; }
+.tsw-name .tsw-scr { color: var(--text-3); }
+.tsw-bar { font-size: 11px; letter-spacing: 0.12em; color: var(--text-3); white-space: pre; }
+.tsw-bar .tsw-fill { color: var(--accent); }

@@ -1,94 +1,48 @@
 // Pure SVG / CSS chart pieces for the Insights view. No chart library.
-import { useMemo, useState } from "react";
-import { ChevronLeft, ChevronRight, Share2 } from "lucide-react";
+// Styles live in src/views/insights.css (prefix "iv-").
+import { useEffect, useMemo, useRef, useState } from "react";
+import { ChevronLeft, ChevronRight } from "lucide-react";
 import type { DayStat } from "../lib/ipc";
 
-// -------------------------------------------------------------------- gauge
+// -------------------------------------------------------------------- meter
 
-/** Dictation speed on a 0-200 WPM scale, without an invented population ranking. */
-export function Gauge({ wpm }: { wpm: number }) {
-  const cx = 92;
-  const cy = 88;
-  const r = 62;
-  const d = `M ${cx - r} ${cy} A ${r} ${r} 0 0 1 ${cx + r} ${cy}`;
-  const filled = Math.max(0, Math.min(100, (wpm / 200) * 100));
+/** Horizontal 0 to max meter with a tiny scale. No population ranking, just the scale. */
+export function Meter({ value, max, label }: { value: number; max: number; label: string }) {
+  const filled = Math.max(0, Math.min(100, (value / max) * 100));
   return (
-    <svg viewBox="0 0 184 110" className="ins-gauge" role="img" aria-label={`${wpm} words per minute on a 0 to 200 scale`}>
-      <path d={d} fill="none" stroke="var(--teal-200)" strokeWidth={18} strokeLinecap="round" />
-      <path
-        d={d}
-        fill="none"
-        stroke="var(--teal-900)"
-        strokeWidth={18}
-        strokeLinecap="round"
-        pathLength={100}
-        strokeDasharray={`${filled} 100`}
-        className="ins-gauge-arc"
-        visibility={wpm > 0 ? "visible" : "hidden"}
-      />
-      {/* The number is already the headline of the card, so the arc only carries a
-          caption and its scale. Repeating "127 wpm" inside the arc collided with it. */}
-      <text x={cx} y={cy - 14} textAnchor="middle" className="ins-gauge-cap">Recent pace</text>
-      <text x={cx - r} y={cy + 16} textAnchor="middle" className="ins-gauge-scale">0</text>
-      <text x={cx + r} y={cy + 16} textAnchor="middle" className="ins-gauge-scale">200</text>
-    </svg>
-  );
-}
-
-// -------------------------------------------------------------- share stamp
-
-/** Round stamp button with a slowly rotating "SHARE" text ring. */
-export function ShareStamp({ onClick }: { onClick: () => void }) {
-  return (
-    <button type="button" className="ins-stamp" onClick={onClick} aria-label="Share" title="Share">
-      <svg viewBox="0 0 76 76" className="ins-stamp-ring" aria-hidden="true">
-        <defs>
-          <path id="spechy-stamp-ring" fill="none" d="M 38 38 m -27 0 a 27 27 0 1 1 54 0 a 27 27 0 1 1 -54 0" />
-        </defs>
-        <text className="ins-stamp-text">
-          <textPath href="#spechy-stamp-ring" startOffset="0">
-            SHARE &middot; SHARE &middot; SHARE &middot;
-          </textPath>
-        </text>
-      </svg>
-      <Share2 size={17} strokeWidth={2} />
-    </button>
-  );
-}
-
-// ---------------------------------------------------------------- bar pieces
-
-/** Proportional teal bar with the percentage inside it. */
-export function PercentBar({ share, strong }: { share: number; strong?: boolean }) {
-  const pct = Math.round(share * 100);
-  const width = Math.max(9, share * 100);
-  return (
-    <div className="ins-bar-track">
-      <div className={`ins-bar-fill ${strong ? "strong" : ""}`} style={{ width: `${width}%` }}>
-        <span>{pct}%</span>
+    <div className="iv-meter" role="img" aria-label={label}>
+      <div className="iv-meter-track">
+        <div className="iv-meter-fill" style={{ width: `${filled}%` }} />
+      </div>
+      <div className="iv-meter-scale">
+        <span>0</span>
+        <span>{max / 2}</span>
+        <span>{max}</span>
       </div>
     </div>
   );
 }
 
-/** Single full width bar; Spechy is desktop only, so the split is always 100%. */
-export function DeviceBar({ label, icon }: { label: string; icon: React.ReactNode }) {
+// ---------------------------------------------------------------- share bar
+
+/** Thin proportional bar for one row of a breakdown. */
+export function ShareBar({ share, strong }: { share: number; strong?: boolean }) {
+  const width = share > 0 ? Math.max(1.5, share * 100) : 0;
   return (
-    <div className="ins-device-bar">
-      <div className="ins-device-seg">
-        {icon}
-        <span>{label}</span>
-      </div>
+    <div className="iv-bar">
+      <div className={`iv-bar-fill${strong ? " strong" : ""}`} style={{ width: `${width}%` }} />
     </div>
   );
 }
 
 // -------------------------------------------------------------------- heatmap
 
-const WEEKDAYS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+const DAY_LABELS = ["", "Mon", "", "Wed", "", "Fri", ""];
 const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
 const TOTAL_WEEKS = 53;
-const VISIBLE_WEEKS = 20;
+const MIN_CELL = 13; // px, smallest square before a week is dropped
+const GAP = 4;
+const DAY_COL = 30;
 
 function isoDate(d: Date): string {
   const p = (n: number) => String(n).padStart(2, "0");
@@ -97,9 +51,26 @@ function isoDate(d: Date): string {
 
 interface Cell { date: Date; iso: string; words: number; level: number; streak: boolean; future: boolean }
 
-/** GitHub style contribution grid: columns are weeks, rows Sun..Sat. */
+/** Contribution grid: columns are weeks, rows Sun..Sat. Shows as many weeks as fit the width. */
 export function Heatmap({ perDay, streakDays }: { perDay: DayStat[]; streakDays: number }) {
   const [offset, setOffset] = useState(0); // weeks scrolled back from the end
+  const [visible, setVisible] = useState(20);
+  const wrap = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    const el = wrap.current;
+    if (!el) return;
+    const fit = () => {
+      const w = el.clientWidth;
+      if (!w) return;
+      const n = Math.floor((w - DAY_COL) / (MIN_CELL + GAP));
+      setVisible(Math.max(8, Math.min(TOTAL_WEEKS, n)));
+    };
+    fit();
+    const ro = new ResizeObserver(fit);
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, []);
 
   const weeks = useMemo<Cell[][]>(() => {
     const byDay = new Map<string, number>();
@@ -130,90 +101,90 @@ export function Heatmap({ perDay, streakDays }: { perDay: DayStat[]; streakDays:
         const iso = isoDate(d);
         const words = byDay.get(iso) ?? 0;
         const level = words <= 0 ? 0 : words <= q1 ? 1 : words <= q2 ? 2 : words <= q3 ? 3 : 4;
-        col.push({
-          date: d,
-          iso,
-          words,
-          level,
-          streak: streakDays > 0 && d >= streakStart && d <= streakEnd,
-          future: d > today,
-        });
+        col.push({ date: d, iso, words, level, streak: streakDays > 0 && d >= streakStart && d <= streakEnd, future: d > today });
       }
       out.push(col);
     }
     return out;
   }, [perDay, streakDays]);
 
-  const maxOffset = Math.max(0, weeks.length - VISIBLE_WEEKS);
-  const start = Math.max(0, weeks.length - VISIBLE_WEEKS - offset);
-  const view = weeks.slice(start, start + VISIBLE_WEEKS);
+  const maxOffset = Math.max(0, weeks.length - visible);
+  const off = Math.min(offset, maxOffset);
+  const start = weeks.length - visible - off;
+  const view = weeks.slice(start, start + visible);
 
-  const monthLabels = view.map((col, i) => {
-    const first = col[0].date;
-    const prev = i > 0 ? view[i - 1][0].date : null;
-    if (!prev || prev.getMonth() !== first.getMonth()) return { i, label: MONTHS[first.getMonth()] };
-    return null;
-  }).filter(Boolean) as { i: number; label: string }[];
+  // A month label sits above the first week whose Sunday falls in that month.
+  // The first column only gets a label if the next one is at least 3 weeks away.
+  const months: { col: number; label: string }[] = [];
+  view.forEach((col, i) => {
+    const m = col[0].date.getMonth();
+    if (i === 0 || view[i - 1][0].date.getMonth() !== m) months.push({ col: i, label: MONTHS[m] });
+  });
+  if (months.length > 1 && months[0].col === 0 && months[1].col < 3) months.shift();
+
+  const fmtDay = (d: Date) => d.toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" });
+  const range = view.length ? `${fmtDay(view[0][0].date)} to ${fmtDay(view[view.length - 1][6].date)}` : "";
 
   return (
-    <div className="ins-hm">
-      <div className="ins-hm-nav">
-        <button
-          type="button"
-          className="ins-hm-arrow"
-          aria-label="Earlier weeks"
-          disabled={offset >= maxOffset}
-          onClick={() => setOffset((o) => Math.min(maxOffset, o + 4))}
-        >
-          <ChevronLeft size={16} />
-        </button>
-        <div className="ins-hm-months">
-          {monthLabels.map((m) => (
-            <span key={`${m.label}-${m.i}`} style={{ gridColumnStart: m.i + 1 }}>{m.label}</span>
-          ))}
-        </div>
-        <button
-          type="button"
-          className="ins-hm-arrow"
-          aria-label="Later weeks"
-          disabled={offset <= 0}
-          onClick={() => setOffset((o) => Math.max(0, o - 4))}
-        >
-          <ChevronRight size={16} />
-        </button>
+    <div className="iv-hm">
+      <div
+        ref={wrap}
+        className="iv-hm-grid"
+        style={{ gridTemplateColumns: `${DAY_COL - GAP}px repeat(${visible}, minmax(0, 1fr))` }}
+        role="img"
+        aria-label={`Words per day, ${range}`}
+      >
+        {months.map((m) => (
+          <span key={`m${m.col}`} className="iv-hm-month" style={{ gridColumn: m.col + 2, gridRow: 1 }}>{m.label}</span>
+        ))}
+        {DAY_LABELS.map((d, i) => (
+          <span key={`d${i}`} className="iv-hm-day" style={{ gridColumn: 1, gridRow: i + 2 }}>{d}</span>
+        ))}
+        {view.map((col, ci) => col.map((c, di) => (
+          <i
+            key={c.iso}
+            className={`iv-hm-cell l${c.level}${c.streak ? " streak" : ""}${c.future ? " future" : ""}`}
+            style={{ gridColumn: ci + 2, gridRow: di + 2 }}
+            title={c.future ? undefined : `${fmtDay(c.date)}: ${c.words.toLocaleString("en-US")} words`}
+          />
+        )))}
       </div>
 
-      <div className="ins-hm-body">
-        <div className="ins-hm-days">
-          {WEEKDAYS.map((d) => <span key={d}>{d}</span>)}
-        </div>
-        <div className="ins-hm-grid">
-          {view.map((col, i) => (
-            <div className="ins-hm-col" key={start + i}>
-              {col.map((c) => (
-                <div
-                  key={c.iso}
-                  className={`ins-hm-cell l${c.level} ${c.streak ? "streak" : ""} ${c.future ? "future" : ""}`}
-                  title={`${c.iso}: ${c.words} words`}
-                />
-              ))}
-            </div>
-          ))}
-        </div>
-      </div>
-
-      <div className="ins-hm-legend">
-        <span className="ins-hm-legend-left">
-          More
-          <i className="ins-hm-cell l4" />
-          <i className="ins-hm-cell l3" />
-          <i className="ins-hm-cell l2" />
-          <i className="ins-hm-cell l1" />
+      <div className="iv-hm-foot">
+        <span className="iv-hm-legend">
           Less
+          <i className="iv-hm-cell l0" />
+          <i className="iv-hm-cell l1" />
+          <i className="iv-hm-cell l2" />
+          <i className="iv-hm-cell l3" />
+          <i className="iv-hm-cell l4" />
+          More
         </span>
-        <span className="ins-hm-legend-right">
-          <i className="ins-hm-cell l0 streak" />
+        <span className="iv-hm-legend">
+          <i className="iv-hm-cell l0 streak" />
           Current streak
+        </span>
+        <span className="iv-hm-nav">
+          <button
+            type="button"
+            className="iv-hm-arrow"
+            aria-label="Earlier weeks"
+            title="Earlier weeks"
+            disabled={off >= maxOffset}
+            onClick={() => setOffset(Math.min(maxOffset, off + 4))}
+          >
+            <ChevronLeft size={16} />
+          </button>
+          <button
+            type="button"
+            className="iv-hm-arrow"
+            aria-label="Later weeks"
+            title="Later weeks"
+            disabled={off <= 0}
+            onClick={() => setOffset(Math.max(0, off - 4))}
+          >
+            <ChevronRight size={16} />
+          </button>
         </span>
       </div>
     </div>
@@ -226,21 +197,24 @@ export function TagCloud({ words }: { words: { word: string; count: number }[] }
   if (!words.length) return null;
   const max = Math.max(...words.map((w) => w.count));
   const min = Math.min(...words.map((w) => w.count));
-  const size = (c: number) => {
-    const t = max === min ? 1 : (c - min) / (max - min);
-    return 13 + t * 22;
-  };
+  const t = (c: number) => (max === min ? 1 : Math.sqrt((c - min) / (max - min)));
+  // Shuffle deterministically so the biggest words do not all pile up at the start.
+  const ordered = [...words].sort((a, b) => (a.word.length * 7 + a.count) % 5 - (b.word.length * 7 + b.count) % 5);
   return (
-    <div className="ins-cloud">
-      {words.map((w) => (
-        <span
-          key={w.word}
-          style={{ fontSize: size(w.count), opacity: 0.55 + 0.45 * (max === min ? 1 : (w.count - min) / (max - min)) }}
-          title={`${w.count}`}
-        >
-          {w.word}
-        </span>
-      ))}
+    <div className="iv-cloud">
+      {ordered.map((w) => {
+        const k = t(w.count);
+        return (
+          <span
+            key={w.word}
+            className={k > 0.66 ? "lg" : k > 0.33 ? "md" : "sm"}
+            style={{ fontSize: Math.round(13 + k * 17) }}
+            title={`${w.count.toLocaleString("en-US")} times`}
+          >
+            {w.word}
+          </span>
+        );
+      })}
     </div>
   );
 }

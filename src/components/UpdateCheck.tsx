@@ -1,8 +1,63 @@
-import { useEffect, useState } from "react";
-import { Download, RefreshCw } from "lucide-react";
+import { useEffect, useState, type ReactNode } from "react";
+import { AlertCircle, CheckCircle2, Download, LoaderCircle, RefreshCw } from "lucide-react";
 import { isTauri } from "@tauri-apps/api/core";
 import { api } from "../lib/ipc";
+import { safe } from "../lib/fallback";
 import { Button } from "./ui";
+
+type Tone = "neutral" | "busy" | "ok" | "available" | "error";
+
+/** Everything the Updates card shows, derived from the update commands. Kept separate so the card renders from plain data. */
+export interface UpdateView {
+  tone: Tone;
+  title: string;
+  detail: string;
+  /** 0..100 while downloading, null for an unknown size, undefined when no download runs. */
+  progress?: number | null;
+  action?: { label: string; primary: boolean; icon?: "refresh" | "download"; onClick: () => void; disabled?: boolean };
+  current: string;
+}
+
+const ICONS: Record<Tone, ReactNode> = {
+  neutral: <RefreshCw size={18} />,
+  busy: <LoaderCircle size={18} className="upd-spin" />,
+  ok: <CheckCircle2 size={18} />,
+  available: <Download size={18} />,
+  error: <AlertCircle size={18} />,
+};
+
+export function UpdateCard({ view }: { view: UpdateView }) {
+  const { tone, title, detail, progress, action, current } = view;
+  return <section className="help-card upd" id="spechy-updates" tabIndex={-1}>
+    <div className="upd-head">
+      <h2 className="help-title">Updates</h2>
+      {current && <span className="upd-version">Version {current}</span>}
+    </div>
+    <div className={`upd-status ${tone}`}>
+      <span className="upd-icon" aria-hidden="true">{ICONS[tone]}</span>
+      <div className="upd-text" role="status">
+        <div className="upd-title">{title}</div>
+        <div className="upd-detail">{detail}</div>
+        {progress !== undefined && <div className={`progress upd-progress ${progress === null ? "indeterminate" : ""}`}
+          role="progressbar" aria-label="Update download" aria-valuemin={0} aria-valuemax={100} aria-valuenow={progress ?? undefined}>
+          <div className="progress-fill" style={progress === null ? undefined : { width: `${progress}%` }} />
+        </div>}
+      </div>
+      {action && <Button
+        variant={action.primary ? "primary" : "secondary"}
+        size="sm"
+        className="upd-action"
+        disabled={action.disabled}
+        onClick={action.onClick}
+      >
+        {action.icon === "download" && <Download size={15} />}
+        {action.icon === "refresh" && <RefreshCw size={14} />}
+        {action.label}
+      </Button>}
+    </div>
+    <p className="upd-note">Updates install in the background. Spechy briefly closes and restarts, your settings and history are kept.</p>
+  </section>;
+}
 
 export default function UpdateCheck() {
   const [checking, setChecking] = useState(false);
@@ -13,6 +68,9 @@ export default function UpdateCheck() {
   const [installing, setInstalling] = useState(false);
   const [downloadError, setDownloadError] = useState("");
   const [progress, setProgress] = useState<{ downloaded: number; total: number | null } | null>(null);
+  const [current, setCurrent] = useState("");
+
+  useEffect(() => { void safe(() => api.getAppVersion(), "").then(setCurrent); }, []);
 
   useEffect(() => {
     if (!isTauri()) return;
@@ -70,18 +128,49 @@ export default function UpdateCheck() {
     catch (reason) { setError(String(reason)); setInstalling(false); }
   };
 
-  const percent = progress?.total ? Math.min(100, Math.round(progress.downloaded / progress.total * 100)) : undefined;
+  const percent = progress?.total ? Math.min(100, Math.round(progress.downloaded / progress.total * 100)) : null;
   const busy = checking || downloading || installing;
+  const tauri = isTauri();
+  const next = ready || result?.version || "";
 
-  return <section className="help-card" id="spechy-updates" tabIndex={-1}>
-    <h2 className="help-title">Updates</h2>
-    <p className="muted" role="status">{error || downloadError || (installing ? "Installing update. Spechy will restart..." : downloading ? `Downloading update${percent === undefined ? "..." : `: ${percent}%`}` : ready ? `Spechy ${ready} is ready to install.` : checking ? "Checking for updates..." : result?.available ? `Spechy ${result.version} is available.` : result ? "You are up to date." : "Check for a new version of Spechy.")}</p>
-    {downloading && <progress className="update-progress" aria-label="Update download" max={100} value={percent} />}
-    <p className="muted">Update now downloads and installs the new version in the background. Spechy briefly closes and restarts. Your settings and history are kept.</p>
-    <div className="help-actions">
-      <Button variant="secondary" disabled={busy || !isTauri()} onClick={() => void check()}><RefreshCw size={16} />Check for updates</Button>
-      {ready ? <Button disabled={busy} onClick={() => void install()}>Update now</Button>
-        : result?.available && <Button disabled={busy} onClick={() => void download()}><Download size={16} />{downloading ? "Downloading..." : "Update now"}</Button>}
-    </div>
-  </section>;
+  const view: UpdateView = (() => {
+    const failure = error || downloadError;
+    if (failure) return {
+      tone: "error", current,
+      title: downloadError && !error ? "The download did not finish" : "Something went wrong",
+      detail: failure,
+      action: ready ? { label: "Update now", primary: true, onClick: () => void install(), disabled: busy }
+        : result?.available ? { label: "Try again", primary: true, icon: "download", onClick: () => void download(), disabled: busy }
+        : { label: "Try again", primary: false, icon: "refresh", onClick: () => void check(), disabled: busy || !tauri },
+    };
+    if (installing) return { tone: "busy", current, title: `Installing Spechy ${next}`, detail: "Spechy closes and restarts in a moment." };
+    if (downloading) return {
+      tone: "busy", current, progress: percent,
+      title: `Downloading Spechy ${next}`,
+      detail: percent === null ? "Starting the download..." : `${percent}% downloaded`,
+    };
+    if (ready) return {
+      tone: "available", current, title: `Spechy ${ready} is ready`,
+      detail: "Downloaded and verified. Install it now to restart into the new version.",
+      action: { label: "Update now", primary: true, icon: "download", onClick: () => void install(), disabled: busy },
+    };
+    if (checking) return { tone: "busy", current, title: "Checking for updates", detail: "This takes a few seconds." };
+    if (result?.available) return {
+      tone: "available", current, title: `Spechy ${result.version} is available`,
+      detail: current ? `You have version ${current}.` : "A new version is ready to download.",
+      action: { label: "Update now", primary: true, icon: "download", onClick: () => void download(), disabled: busy },
+    };
+    if (result) return {
+      tone: "ok", current, title: "You are up to date",
+      detail: current ? `Spechy ${current} is the latest version.` : "You have the latest version.",
+      action: { label: "Check again", primary: false, icon: "refresh", onClick: () => void check(), disabled: busy || !tauri },
+    };
+    return {
+      tone: "neutral", current, title: "Check for a new version",
+      detail: tauri ? "Spechy looks for updates when the window opens." : "Updates are only available in the desktop app.",
+      action: { label: "Check now", primary: false, icon: "refresh", onClick: () => void check(), disabled: busy || !tauri },
+    };
+  })();
+
+  return <UpdateCard view={view} />;
 }

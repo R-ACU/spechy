@@ -1,0 +1,29 @@
+/* Voice Snake: first-use download of the voice model and the row of heard directions.
+   Base layout of the game lives in games.css. */
+
+/* ---------- download ---------- */
+.vs-dl { display: flex; flex-direction: column; gap: 10px; width: min(300px, 100%); text-align: left; }
+.vs-dl-title { font-size: 13.5px; line-height: 1.45; color: var(--text); font-weight: 500; }
+.vs-dl-bar { display: block; height: 6px; border-radius: 3px; background: var(--surface-2); overflow: hidden; }
+.vs-dl-fill {
+  display: block; width: 100%; height: 100%; border-radius: 3px; background: var(--accent);
+  transform-origin: left center; transition: transform 160ms linear;
+}
+.vs-dl-meta { display: flex; align-items: center; justify-content: space-between; gap: 12px; font-size: 12.5px; color: var(--text-3); font-variant-numeric: tabular-nums; }
+
+/* ---------- heard directions ---------- */
+.vs-chips { margin-top: auto; display: flex; flex-wrap: wrap; align-content: flex-end; gap: 6px; }
+.vs-chip {
+  display: inline-flex; align-items: center; gap: 4px; padding: 3px 9px 3px 7px; border-radius: 999px;
+  font-size: 13px; line-height: 1.4; font-weight: 500; color: var(--text-2); background: var(--surface-2);
+  animation: vs-chip-in 160ms var(--ease) both;
+}
+.vs-chip.old { color: var(--text-3); }
+.vs-chip.newest { background: var(--accent-soft); color: var(--accent); font-weight: 600; }
+.vs-chip.pending { background: transparent; color: var(--text-3); box-shadow: inset 0 0 0 1px var(--border-strong); opacity: 0.8; }
+@keyframes vs-chip-in { from { opacity: 0; transform: translateY(3px); } to { opacity: 1; transform: none; } }
+
+@media (prefers-reduced-motion: reduce) {
+  .vs-chip { animation: none; }
+  .vs-dl-fill { transition: none; }
+}

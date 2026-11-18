@@ -119,7 +119,8 @@ export interface StyleSettings { defaultTone: Tone; appRules: AppStyleRule[]; cu
 export interface Settings {
   userName: string;
   appLanguage: "en" | "de";
-  theme: "system" | "light" | "dark";
+  /** Theme id, resolved in src/lib/theme.ts ("system" | "light" | "dark" | extra themes). Stored as a plain string by the backend. */
+  theme: string;
   dictationLanguages: string[];
   /** Language the user mainly speaks: "de", "en", "auto", or "" to follow the first dictation language. */
   primaryLanguage: string;

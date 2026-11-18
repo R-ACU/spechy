@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { Bell, Download, X } from "lucide-react";
+import { ArrowRight, Bell, BellOff, Download, X } from "lucide-react";
 import { isTauri } from "@tauri-apps/api/core";
 import { api } from "../lib/ipc";
 import { useStore } from "../lib/store";
@@ -14,6 +14,10 @@ export default function UpdateNotifications() {
   const root = useRef<HTMLDivElement>(null);
   const trigger = useRef<HTMLButtonElement>(null);
   const action = useRef<HTMLButtonElement>(null);
+  const panel = useRef<HTMLDivElement>(null);
+  // Opened by keyboard (click with detail 0): move focus to the action. Opened by mouse: focus the panel
+  // itself, so no focus ring appears on a button the user never tabbed to.
+  const byKeyboard = useRef(false);
 
   useEffect(() => {
     if (!isTauri()) return;
@@ -49,7 +53,7 @@ export default function UpdateNotifications() {
 
   useEffect(() => {
     if (!open) return;
-    action.current?.focus();
+    (byKeyboard.current ? action.current : panel.current)?.focus();
     const pointer = (event: PointerEvent) => {
       if (!root.current?.contains(event.target as Node)) setOpen(false);
     };
@@ -75,19 +79,24 @@ export default function UpdateNotifications() {
     <button ref={trigger} type="button" className="icon-btn notification-trigger"
       aria-label={version ? "Notifications, 1 update available" : "Notifications"}
       aria-expanded={open} aria-controls="update-notification-panel" aria-haspopup="dialog"
-      onClick={() => setOpen(value => !value)}>
+      onClick={(event) => { byKeyboard.current = event.detail === 0; setOpen(value => !value); }}>
       <Bell size={18} className={ringing ? "notification-ring" : undefined} onAnimationEnd={() => setRinging(false)} />
       {version && <span className="notification-count" aria-hidden="true">1</span>}
     </button>
-    {open && <div id="update-notification-panel" className="notification-panel" role="dialog" aria-label="Notifications">
-      <div className="notification-heading"><strong>Notifications</strong><IconButton label="Close notifications" onClick={() => { setOpen(false); trigger.current?.focus(); }}><X size={16} /></IconButton></div>
-      {version ? <button ref={action} className="notification-update" onClick={showUpdates}>
-        <Download size={19} />
-        <span><strong>Spechy {version} is available</strong><span>View update and install</span></span>
+    {open && <div ref={panel} id="update-notification-panel" className="notification-panel" role="dialog" aria-label="Notifications" tabIndex={-1}>
+      <div className="notification-heading">
+        <span>Notifications</span>
+        <IconButton label="Close notifications" className="notification-close" onClick={() => { setOpen(false); trigger.current?.focus(); }}><X size={15} /></IconButton>
+      </div>
+      {version ? <button ref={action} type="button" className="notification-update" onClick={showUpdates}>
+        <span className="notification-icon"><Download size={16} /></span>
+        <span className="notification-text"><strong>Spechy {version} is available</strong><span>View the update and install it</span></span>
+        <ArrowRight size={15} className="notification-arrow" />
       </button> : <div className="notification-empty">
-        <p>{failed ? "Could not check for updates." : "No new updates."}</p>
-        <button ref={action} className="btn btn-secondary" onClick={showUpdates}>Open Updates</button>
+        <span className="notification-icon"><BellOff size={16} /></span>
+        <span className="notification-text"><strong>{failed ? "Could not check for updates" : "No new updates"}</strong><span>{failed ? "Spechy tries again in a while." : "You will see new versions here."}</span></span>
       </div>}
+      {!version && <button ref={action} type="button" className="notification-link" onClick={showUpdates}>Open Updates<ArrowRight size={14} /></button>}
     </div>}
   </div>;
 }

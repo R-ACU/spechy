@@ -1,6 +1,7 @@
 //! Spechy: voice dictation for Windows. Entry point of the library crate.
 
 mod snake;
+mod vosk;
 pub mod audio;
 pub mod autostart;
 pub mod commands;
@@ -125,7 +126,11 @@ pub fn run() {
             }
             // A window closed while a shortcut was being recorded never sends
             // the "resume" call: the hotkeys must not stay paused behind it.
-            WindowEvent::Destroyed => hotkey::set_suspended(false),
+            // The Voice Snake listener belongs to the window's Games view: no window, no mic.
+            WindowEvent::Destroyed => {
+                hotkey::set_suspended(false);
+                snake::stop_all();
+            }
             _ => {}
         })
         .build(tauri::generate_context!())
@@ -138,6 +143,7 @@ pub fn run() {
                 // Never leave the local whisper.cpp server running behind the app.
                 tauri::RunEvent::Exit => {
                     crate::local_server::stop();
+                    crate::snake::stop_all();
                     crate::ducking::restore_blocking();
                 }
                 _ => {}

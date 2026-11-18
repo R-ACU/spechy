@@ -1,6 +1,6 @@
 [package]
 name = "spechy"
-version = "0.1.13"
+version = "0.1.14"
 description = "Voice dictation for Windows: hold a key, speak, text lands where you type."
 authors = ["Remo"]
 edition = "2021"
@@ -33,6 +33,8 @@ chrono = { version = "0.4", features = ["serde"] }
 uuid = { version = "1", features = ["v4"] }
 log = "0.4"
 env_logger = "0.11"
+libloading = "0.7"
+zip = { version = "9", default-features = false, features = ["deflate-flate2"] }
 
 [target.'cfg(windows)'.dependencies]
 winreg = "0.52"
@@ -53,6 +55,7 @@ windows = { version = "0.58", features = [
   "Win32_Media_Audio",
   "Win32_System_ProcessStatus",
   "Win32_System_SystemInformation",
+  "Win32_Storage_FileSystem",
 ] }
 
 # Linux port (Hyprland/Wayland): the pill is a GTK layer-shell surface drawn with cairo,

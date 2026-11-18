@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { Hash, Laptop, Plug, ShieldCheck, SlidersHorizontal } from "lucide-react";
+import { Hash, Laptop, Palette, Plug, ShieldCheck, SlidersHorizontal } from "lucide-react";
 import { api } from "../../lib/ipc";
 import { safeCall } from "../../lib/mock";
 import General from "./General";
@@ -7,11 +7,13 @@ import SystemSection from "./System";
 import Providers from "./Providers";
 import VibeCoding from "./VibeCoding";
 import DataPrivacy from "./DataPrivacy";
+import Themes from "./Themes";
 
-type SectionId = "general" | "system" | "providers" | "vibe" | "data";
+type SectionId = "general" | "themes" | "system" | "providers" | "vibe" | "data";
 
 const SECTIONS: { id: SectionId; label: string; icon: React.ReactNode; group: "settings" | "data" }[] = [
   { id: "general", label: "General", icon: <SlidersHorizontal size={17} />, group: "settings" },
+  { id: "themes", label: "Themes", icon: <Palette size={17} />, group: "settings" },
   { id: "system", label: "System", icon: <Laptop size={17} />, group: "settings" },
   { id: "providers", label: "Providers", icon: <Plug size={17} />, group: "settings" },
   { id: "vibe", label: "Vibe coding", icon: <Hash size={17} />, group: "settings" },
@@ -20,6 +22,7 @@ const SECTIONS: { id: SectionId; label: string; icon: React.ReactNode; group: "s
 
 const TITLES: Record<SectionId, string> = {
   general: "General",
+  themes: "Themes",
   system: "System",
   providers: "Providers",
   vibe: "Vibe coding",
@@ -83,6 +86,7 @@ export default function Settings({ open, onClose, initialSection }: { open: bool
           <h2 className="set-title">{TITLES[section]}</h2>
           <div className="set-sections" key={section}>
             {section === "general" && <General />}
+            {section === "themes" && <Themes />}
             {section === "system" && <SystemSection />}
             {section === "providers" && <Providers />}
             {section === "vibe" && <VibeCoding />}

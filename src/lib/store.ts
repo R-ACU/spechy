@@ -9,7 +9,7 @@ export interface AppStore {
   /** Persist a partial change; backend echoes the full settings back. */
   update: (patch: SettingsPatch) => Promise<void>;
   toast: (t: Toast) => void;
-  /** Navigate to a view id: "home" | "insights" | "dictionary" | "snippets" | "style" | "transforms" | "scratchpad" | "settings" | "help" */
+  /** Navigate to a view id: "home" | "insights" | "dictionary" | "snippets" | "style" | "games" | "settings" | "help" (or "settings:<section>") */
   navigate: (view: string) => void;
   view: string;
 }
@@ -25,7 +25,7 @@ export function useStore(): AppStore {
 /** Tiny i18n: UI strings in English (default) or German, switched by settings.appLanguage. Add keys as needed. */
 const de: Record<string, string> = {
   "Welcome back": "Willkommen zurück",
-  Home: "Start", Insights: "Einblicke", Dictionary: "Wörterbuch", Snippets: "Bausteine", Style: "Stil", Transforms: "Umwandlungen", Scratchpad: "Notizblock", Settings: "Einstellungen", Help: "Hilfe",
+  Home: "Start", Insights: "Einblicke", Dictionary: "Wörterbuch", Snippets: "Bausteine", Style: "Stil", Games: "Spiele", Settings: "Einstellungen", Help: "Hilfe",
   "Add new": "Neu", All: "Alle", Personal: "Persönlich", Cancel: "Abbrechen", Save: "Speichern", Delete: "Löschen", Edit: "Bearbeiten", Search: "Suchen",
   "total words": "Wörter gesamt", wpm: "WpM", "day streak": "Tage in Folge",
 };

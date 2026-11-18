@@ -18,12 +18,6 @@ const PRIMARY_LANG_OPTIONS = [
   { value: "auto", label: "Let the model decide" },
 ];
 
-const THEME_OPTIONS = [
-  { value: "system", label: "System" },
-  { value: "light", label: "Light" },
-  { value: "dark", label: "Dark" },
-];
-
 export default function General() {
   const { settings, update } = useStore();
   const [mics, setMics] = useState<MicDevice[]>([]);
@@ -83,15 +77,6 @@ export default function General() {
             value={settings.appLanguage}
             options={[{ value: "en", label: "English" }, { value: "de", label: "German" }]}
             onChange={(v) => void update({ appLanguage: v as "en" | "de" })}
-            className="set-listbox"
-          />
-        </Row>
-
-        <Row label="Theme" sub="Follow Windows, or force light or dark.">
-          <Listbox
-            value={settings.theme}
-            options={THEME_OPTIONS}
-            onChange={(v) => void update({ theme: v as "system" | "light" | "dark" })}
             className="set-listbox"
           />
         </Row>
