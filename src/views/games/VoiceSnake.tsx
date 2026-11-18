@@ -1,17 +1,22 @@
-// Voice Snake: steer by saying up, down, left or right (offline Vosk engine in snake.rs and
-// vosk.rs, downloaded once on first use) or with the arrow keys. The recognizer only knows
-// the four directions, so the right panel shows the directions it heard as a running row of
-// chips, never free text. Hitting a wall or your own tail ends the round. The snake glides
+// Voice Snake: two modes with their own personal best. "Play with voice" steers only by
+// speech (offline Vosk engine in snake.rs and vosk.rs, each language's model downloaded on
+// first use): English up, down, left, right or German hoch, runter, links, rechts (also oben,
+// unten). "Play with keys" steers only with the arrow keys and never opens the microphone.
+// The recognizer knows nothing but the direction words, so the right panel shows the words
+// it heard as a running row of chips, never free text. Hitting a wall or your own tail ends the round. The snake glides
 // between cells (drawn every frame from the last two board states) instead of jumping.
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { ArrowDown, ArrowLeft, ArrowRight, ArrowUp, Ear, Keyboard, Mic, Play, X, type LucideIcon } from "lucide-react";
 import { invoke, isTauri } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
-import { readBest, SNAKE_BEST_KEY, type GameProps } from "./catalog";
+import { useStore } from "../../lib/store";
+import { migrateSnakeBest, readBest, SNAKE_KEYS_BEST_KEY, SNAKE_VOICE_BEST_KEY, writeBest, type GameProps } from "./catalog";
 import "./voice.css";
 
 type Dir = "up" | "down" | "left" | "right";
 type Phase = "ready" | "count" | "play" | "paused" | "over";
+type Mode = "voice" | "keys";
+type Lang = "en" | "de";
 type Voice =
   | { state: "off" }
   | { state: "starting" }
@@ -30,8 +35,9 @@ type SnakeMsg = { session: string } & (
   | { kind: "error"; code: string; detail: string }
   | { kind: "closed" }
 );
-interface Chip { id: number; dir: Dir }
-interface Last { id: number; dir: Dir | null }
+interface Chip { id: number; dir: Dir; word: string }
+interface Pending { dir: Dir; word: string }
+interface Last { id: number; dir: Dir | null; word: string }
 type Cell = [number, number];
 interface Board { body: Cell[]; prev: Cell[]; tickAt: number; dir: Dir; queue: Dir[]; food: Cell; points: number; ms: number; dead: boolean; cause: "wall" | "tail" | null }
 
@@ -49,6 +55,15 @@ const KEYS: Record<string, Dir> = {
   ArrowUp: "up", ArrowDown: "down", ArrowLeft: "left", ArrowRight: "right", KeyW: "up", KeyS: "down", KeyA: "left", KeyD: "right",
 };
 const isDir = (s: string): s is Dir => s === "up" || s === "down" || s === "left" || s === "right";
+/** Spoken words of both languages, for the chips and the pending preview. */
+const WORDS: Record<string, Dir> = {
+  up: "up", down: "down", left: "left", right: "right",
+  hoch: "up", oben: "up", runter: "down", unten: "down", links: "left", rechts: "right",
+};
+const SAY: Record<Lang, string> = { en: "Say up, down, left or right", de: "Say hoch, runter, links or rechts" };
+const LANGS: [Lang, string][] = [["en", "English"], ["de", "Deutsch"]];
+const LANG_KEY = "spechy.snake.voiceLanguage";
+const BEST_KEY: Record<Mode, string> = { voice: SNAKE_VOICE_BEST_KEY, keys: SNAKE_KEYS_BEST_KEY };
 const ERRORS: Record<string, string> = {
   "download-failed": "The voice model could not be downloaded. Check your internet connection and try again. Arrow keys work meanwhile.",
   "unsupported-platform": "Voice control is not available on this system. Arrow keys work everywhere.",
@@ -69,13 +84,58 @@ function token(name: string): string {
   return getComputedStyle(document.documentElement).getPropertyValue(name).trim();
 }
 
-export default function VoiceSnake({ onBest }: GameProps) {
+/** The remembered choice, else Spechy's spoken language: German speakers get Deutsch. */
+function initialLang(primary: string, dictation: string[]): Lang {
+  try {
+    const saved = localStorage.getItem(LANG_KEY);
+    if (saved === "en" || saved === "de") return saved;
+  } catch { /* storage blocked */ }
+  const pick = primary && primary !== "auto" ? primary : dictation[0] ?? "";
+  return pick.slice(0, 2).toLowerCase() === "de" ? "de" : "en";
+}
+
+/** English / Deutsch as a small segmented control (radio group, arrow keys switch). */
+function LangPicker({ value, onChange, disabled }: { value: Lang; onChange: (l: Lang) => void; disabled: boolean }) {
+  const refs = useRef<(HTMLButtonElement | null)[]>([]);
+  return (
+    <div className="vs-lang" role="radiogroup" aria-label="Voice language">
+      {LANGS.map(([id, label], i) => (
+        <button
+          key={id}
+          ref={(el) => { refs.current[i] = el; }}
+          type="button"
+          role="radio"
+          aria-checked={value === id}
+          tabIndex={value === id ? 0 : -1}
+          disabled={disabled}
+          className="vs-lang-opt"
+          onClick={() => onChange(id)}
+          onKeyDown={(e) => {
+            if (!["ArrowLeft", "ArrowRight", "ArrowUp", "ArrowDown"].includes(e.key)) return;
+            e.preventDefault();
+            e.stopPropagation();
+            const next = (i + 1) % LANGS.length;
+            onChange(LANGS[next][0]);
+            refs.current[next]?.focus();
+          }}
+        >
+          {label}
+        </button>
+      ))}
+    </div>
+  );
+}
+
+export default function VoiceSnake({ onBest, onBestKey }: GameProps) {
+  const { settings } = useStore();
   const [phase, setPhase] = useState<Phase>("ready");
   const [count, setCount] = useState(3);
   const [points, setPoints] = useState(0);
   const [voice, setVoice] = useState<Voice>({ state: "off" });
   const [chips, setChips] = useState<Chip[]>([]);
-  const [pending, setPending] = useState<Dir | null>(null);
+  const [pending, setPending] = useState<Pending | null>(null);
+  const [mode, setMode] = useState<Mode | null>(null);
+  const [lang, setLang] = useState<Lang>(() => initialLang(settings.primaryLanguage, settings.dictationLanguages));
   const [last, setLast] = useState<Last | null>(null);
   const [level, setLevel] = useState(0);
   const [hint, setHint] = useState("");
@@ -96,9 +156,24 @@ export default function VoiceSnake({ onBest }: GameProps) {
   const chipsEnd = useRef<HTMLDivElement>(null);
   const bestRef = useRef(onBest);
   bestRef.current = onBest;
+  const bestKeyRef = useRef(onBestKey);
+  bestKeyRef.current = onBestKey;
+  const modeRef = useRef<Mode | null>(null);
+  const langRef = useRef(lang);
+  langRef.current = lang;
+  const migrated = useRef(false);
+  if (!migrated.current) {
+    migrated.current = true;
+    migrateSnakeBest();
+  }
 
   const setPhaseBoth = useCallback((p: Phase) => { phaseRef.current = p; setPhase(p); }, []);
   const setVoiceBoth = useCallback((v: Voice) => { voiceRef.current = v; setVoice(v); }, []);
+  const setModeBoth = useCallback((m: Mode) => {
+    modeRef.current = m;
+    setMode(m);
+    bestKeyRef.current?.(BEST_KEY[m]);
+  }, []);
   const later = useCallback((fn: () => void, ms: number) => { timers.current.push(window.setTimeout(fn, ms)); }, []);
   const flash = useCallback((text: string) => {
     setHint(text);
@@ -258,10 +333,8 @@ export default function VoiceSnake({ onBest }: GameProps) {
       for (let y = 0; y < N; y++) for (let x = 0; x < N; x++) if (!b.body.some((c) => c[0] === x && c[1] === y)) free.push([x, y]);
       if (free.length) b.food = free[Math.floor(Math.random() * free.length)];
       setPoints(b.points);
-      if (b.points > readBest(SNAKE_BEST_KEY)) {
-        try { localStorage.setItem(SNAKE_BEST_KEY, String(b.points)); } catch { /* storage blocked */ }
-        bestRef.current(b.points);
-      }
+      const key = BEST_KEY[modeRef.current ?? "keys"];
+      if (writeBest(key, b.points)) bestRef.current(b.points, key);
     }
     tickTimer.current = window.setTimeout(tick, b.ms);
   }, [setPhaseBoth]);
@@ -320,7 +393,7 @@ export default function VoiceSnake({ onBest }: GameProps) {
     session.current = id;
     setVoiceBoth({ state: "starting" });
     try {
-      await invoke("snake_start", { session: id });
+      await invoke("snake_start", { session: id, language: langRef.current });
       return true;
     } catch (e) {
       const msg = String(e);
@@ -333,6 +406,39 @@ export default function VoiceSnake({ onBest }: GameProps) {
     }
   }, [setVoiceBoth, stopVoice]);
 
+  /** Start a round in `m`. Voice starts (or keeps) the listener and begins once it is
+   *  ready; keys stop any listener, so the microphone stays closed. */
+  const playWith = useCallback((m: Mode) => {
+    setModeBoth(m);
+    if (m === "keys") {
+      cancelVoice();
+      begin();
+    } else if (voiceRef.current.state === "on") {
+      begin();
+    } else if (voiceRef.current.state !== "starting" && voiceRef.current.state !== "downloading") {
+      void startVoice();
+    }
+  }, [begin, cancelVoice, setModeBoth, startVoice]);
+
+  /** The listener died in the middle of a voice round: nothing can steer, so hold the game. */
+  const holdVoiceRound = useCallback(() => {
+    if (modeRef.current !== "voice") return;
+    if (phaseRef.current === "play") pause();
+    else if (phaseRef.current === "count") {
+      timers.current.forEach((t) => window.clearTimeout(t));
+      timers.current = [];
+      setPhaseBoth("ready");
+    }
+  }, [pause, setPhaseBoth]);
+
+  const chooseLang = useCallback((l: Lang) => {
+    if (l === langRef.current) return;
+    setLang(l);
+    try { localStorage.setItem(LANG_KEY, l); } catch { /* storage blocked */ }
+    // A running listener hears the old language; the next voice round starts a new one.
+    if (session.current) cancelVoice();
+  }, [cancelVoice]);
+
   onMsg.current = (m: SnakeMsg) => {
     if (!m || m.session !== session.current) return;
     switch (m.kind) {
@@ -341,34 +447,36 @@ export default function VoiceSnake({ onBest }: GameProps) {
         break;
       case "ready":
         setVoiceBoth({ state: "on" });
-        if (phaseRef.current === "ready") begin();
+        if (modeRef.current === "voice" && (phaseRef.current === "ready" || phaseRef.current === "over")) begin();
         break;
       case "level": setLevel(m.value); break;
-      case "partial": setPending(isDir(m.text) ? m.text : null); break;
+      case "partial": setPending(WORDS[m.text] ? { dir: WORDS[m.text], word: m.text } : null); break;
       case "heard": {
         if (!isDir(m.command)) break;
         const p = phaseRef.current;
-        if (p === "play" || p === "count") steer(m.command);
+        if (modeRef.current === "voice" && (p === "play" || p === "count")) steer(m.command);
         setPending(null);
-        setLast({ id: Date.now(), dir: m.command });
+        setLast({ id: Date.now(), dir: m.command, word: m.word || m.command });
         chipId.current += 1;
-        const chip = { id: chipId.current, dir: m.command };
+        const chip = { id: chipId.current, dir: m.command, word: m.word || m.command };
         setChips((cs) => [...cs, chip].slice(-MAX_CHIPS));
         break;
       }
-      case "rejected": setLast({ id: Date.now(), dir: null }); break;
+      case "rejected": setLast({ id: Date.now(), dir: null, word: "" }); break;
       case "signal": if (SIGNALS[m.problem]) flash(SIGNALS[m.problem]); break;
       case "error":
         session.current = "";
         setLevel(0);
         setPending(null);
         setVoiceBoth({ state: "error", message: ERRORS[m.code] ?? `Voice control stopped. ${m.detail}`.trim() });
+        holdVoiceRound();
         break;
       case "closed":
         session.current = "";
         setLevel(0);
         setPending(null);
-        if (voiceRef.current.state !== "error") setVoiceBoth({ state: "error", message: "Voice control stopped. Press Listen again to turn it back on." });
+        if (voiceRef.current.state !== "error") setVoiceBoth({ state: "error", message: "Voice control stopped. Press Play again to turn it back on." });
+        holdVoiceRound();
         break;
     }
   };
@@ -398,36 +506,45 @@ export default function VoiceSnake({ onBest }: GameProps) {
     const onKey = (e: KeyboardEvent) => {
       const el = e.target as HTMLElement | null;
       if (el && (el.tagName === "INPUT" || el.tagName === "TEXTAREA" || el.isContentEditable)) return;
+      if (el?.closest('[role="radiogroup"]')) return;
       if (document.querySelector('[role="dialog"]')) return;
       const d = KEYS[e.code];
+      const p = phaseRef.current;
       if (d) {
         e.preventDefault();
-        if (phaseRef.current === "play" || phaseRef.current === "count") steer(d);
+        if (p !== "play" && p !== "count") return;
+        // Voice mode is a different game: the keys do not steer there.
+        if (modeRef.current === "keys") steer(d);
+        else flash("This round is steered by voice. Choose Play with keys to use the arrows.");
       } else if ((e.code === "Space" || e.code === "Enter") && !e.repeat) {
         e.preventDefault();
-        const p = phaseRef.current;
-        if (p === "ready" || p === "over") begin();
+        if (p === "ready" || p === "over") playWith(modeRef.current ?? "keys");
         else if (p === "play") pause();
         else if (p === "paused") resume();
       }
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [begin, pause, resume, steer]);
+  }, [flash, pause, playWith, resume, steer]);
 
   // ---------- view ----------
-  const best = Math.max(readBest(SNAKE_BEST_KEY), points);
+  const best = mode ? Math.max(readBest(BEST_KEY[mode]), points) : 0;
+  const bestLine = mode
+    ? `${mode === "voice" ? "Voice" : "Keys"} best ${best}`
+    : `Voice ${readBest(SNAKE_VOICE_BEST_KEY)} · Keys ${readBest(SNAKE_KEYS_BEST_KEY)}`;
   const listening = voice.state === "on";
+  const say = SAY[lang];
   const busy = voice.state === "starting" || voice.state === "downloading";
   const status = (() => {
     if (hint) return { text: hint, err: false };
     if (voice.state === "error" || voice.state === "unavailable") return { text: voice.message, err: voice.state === "error" };
     if (voice.state === "starting") return { text: "Starting voice control...", err: false };
-    if (listening) return { text: "Listening. Say up, down, left or right.", err: false };
+    if (listening) return { text: `Listening. ${say}.`, err: false };
     return { text: "", err: false };
   })();
   const LastIcon = last?.dir ? ICON[last.dir] : Ear;
-  const PendingIcon = pending ? ICON[pending] : null;
+  const PendingIcon = pending ? ICON[pending.dir] : null;
+  const picker = <LangPicker value={lang} onChange={chooseLang} disabled={busy} />;
 
   const download = voice.state === "downloading" ? (
     <div className="vs-dl" role="group" aria-label="Voice model download">
@@ -449,7 +566,7 @@ export default function VoiceSnake({ onBest }: GameProps) {
       <div className="vs-main">
         <div className="vs-score">
           <span><strong>{points}</strong>points</span>
-          <span>Best {best}</span>
+          <span>{bestLine}</span>
         </div>
         <div className="vs-board-wrap" ref={wrap}>
           <div className="vs-board-box" style={{ width: size, height: size }}>
@@ -460,13 +577,14 @@ export default function VoiceSnake({ onBest }: GameProps) {
           {phase === "ready" && (
             <div className="vs-over">
               <span className="vs-over-title">Voice Snake</span>
-              <span className="vs-over-line">Say up, down, left or right. Avoid the walls and your own tail.</span>
+              <span className="vs-over-line">{say}, or play with the arrow keys. Avoid the walls and your own tail.</span>
+              {picker}
               {download ?? (
                 <div className="vs-actions">
-                  <button className="btn btn-primary btn-sm" disabled={busy} onClick={() => { void startVoice().then((ok) => { if (!ok) begin(); }); }}>
+                  <button className="btn btn-primary btn-sm" disabled={busy} onClick={() => playWith("voice")}>
                     <Mic size={15} aria-hidden="true" /> Play with voice
                   </button>
-                  <button className="btn btn-secondary btn-sm" onClick={begin}>
+                  <button className="btn btn-secondary btn-sm" onClick={() => playWith("keys")}>
                     <Keyboard size={15} aria-hidden="true" /> Play with keys
                   </button>
                 </div>
@@ -483,12 +601,19 @@ export default function VoiceSnake({ onBest }: GameProps) {
             <div className="vs-over">
               <span className="vs-over-title">{points} {points === 1 ? "point" : "points"}</span>
               <span className="vs-over-line">{points > 0 && points >= best ? "New personal best." : board.current.cause === "wall" ? "You hit the wall." : "You bit your own tail."} Press Space to play again.</span>
+              {mode === "voice" && picker}
               {download ?? (
                 <div className="vs-actions">
-                  <button className="btn btn-primary btn-sm" onClick={begin}><Play size={15} aria-hidden="true" /> Play again</button>
-                  {!listening && !busy && (
-                    <button className="btn btn-secondary btn-sm" onClick={() => { void startVoice(); }}>
-                      <Mic size={15} aria-hidden="true" /> Listen again
+                  <button className="btn btn-primary btn-sm" disabled={busy} onClick={() => playWith(mode ?? "keys")}>
+                    <Play size={15} aria-hidden="true" /> Play again
+                  </button>
+                  {mode === "voice" ? (
+                    <button className="btn btn-secondary btn-sm" onClick={() => playWith("keys")}>
+                      <Keyboard size={15} aria-hidden="true" /> Play with keys
+                    </button>
+                  ) : (
+                    <button className="btn btn-secondary btn-sm" onClick={() => playWith("voice")}>
+                      <Mic size={15} aria-hidden="true" /> Play with voice
                     </button>
                   )}
                 </div>
@@ -505,7 +630,7 @@ export default function VoiceSnake({ onBest }: GameProps) {
           <span className={`vs-last-icon ${last?.dir ? "" : "idle"}`}><LastIcon size={20} strokeWidth={2.2} aria-hidden="true" /></span>
           <span className="vs-last-text">
             <span className="vs-last-title">{last?.dir ? LABEL[last.dir] : last ? "Did not catch that" : "Waiting for a direction"}</span>
-            <span className="vs-last-sub">{last?.dir ? "Heard" : last ? "Say up, down, left or right" : listening ? "Say up, down, left or right" : "Play with voice to steer by speaking"}</span>
+            <span className="vs-last-sub">{last?.dir ? `Heard "${last.word}"` : last || listening ? say : "Play with voice to steer by speaking"}</span>
           </span>
         </div>
         <div className="vs-meter" aria-hidden="true">
@@ -522,20 +647,24 @@ export default function VoiceSnake({ onBest }: GameProps) {
                 const Icon = ICON[c.dir];
                 return (
                   <span key={c.id} className={`vs-chip ${i === chips.length - 1 ? "newest" : ""} ${i < chips.length - 12 ? "old" : ""}`}>
-                    <Icon size={13} strokeWidth={2.4} aria-hidden="true" />{c.dir}
+                    <Icon size={13} strokeWidth={2.4} aria-hidden="true" />{c.word}
                   </span>
                 );
               })}
               {pending && PendingIcon && (
                 <span className="vs-chip pending" aria-hidden="true">
-                  <PendingIcon size={13} strokeWidth={2.4} />{pending}
+                  <PendingIcon size={13} strokeWidth={2.4} />{pending.word}
                 </span>
               )}
               <div ref={chipsEnd} />
             </div>
           )}
         </div>
-        <div className="vs-hint"><kbd>←</kbd> <kbd>↑</kbd> <kbd>↓</kbd> <kbd>→</kbd> or WASD steer, <kbd>Space</kbd> pauses.</div>
+        <div className="vs-hint">
+          {mode === "voice"
+            ? <>Speak to steer, <kbd>Space</kbd> pauses.</>
+            : <><kbd>←</kbd> <kbd>↑</kbd> <kbd>↓</kbd> <kbd>→</kbd> or WASD steer, <kbd>Space</kbd> pauses.</>}
+        </div>
       </aside>
     </div>
   );

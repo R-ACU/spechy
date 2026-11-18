@@ -205,7 +205,8 @@ textarea.input { height: auto; padding: 10px 12px; resize: vertical; line-height
 .rise { animation: rise-in 240ms var(--ease) both; }
 
 /* ============================================================ Settings overlay (Agent D) */
-.set-backdrop { position: fixed; inset: 0; background: transparent; display: flex; align-items: center; justify-content: center; z-index: 120; animation: fade-in 140ms var(--ease); }
+/* Settings blurs everything behind it (no grey tint, see AGENTS.md). */
+.set-backdrop { position: fixed; inset: 0; background: transparent; backdrop-filter: blur(10px); -webkit-backdrop-filter: blur(10px); display: flex; align-items: center; justify-content: center; z-index: 120; animation: fade-in 140ms var(--ease); }
 .set-panel { display: flex; width: 960px; max-width: calc(100vw - 48px); height: 640px; max-height: calc(100vh - 48px); background: var(--raised); border-radius: 16px; box-shadow: var(--shadow-3); overflow: hidden; animation: pop-in 180ms var(--ease); }
 
 .set-nav { width: 210px; flex: none; background: var(--bg); display: flex; flex-direction: column; padding: 22px 12px 14px; }

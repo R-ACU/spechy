@@ -1,11 +1,12 @@
 //! Voice Snake (Games tab): offline voice commands through Vosk (`vosk.rs`).
 //!
-//! A session downloads the engine and the small English model on first use, opens the
-//! microphone and feeds it to one recognizer with a closed grammar: exactly the four
-//! directions plus "[unk]", so other speech and noise are rejected instead of being
-//! forced into a direction, and free text can never show up. A command fires the moment
-//! it first appears in a partial result, so "down down down up up up" steers as fast as
-//! it is said. Every result becomes a `snake-input` event.
+//! A session plays in one language, English or German. It downloads the engine and that
+//! language's small model on first use, opens the microphone and feeds it to one
+//! recognizer with a closed grammar: only the direction words of that language plus
+//! "[unk]", so other speech and noise are rejected instead of being forced into a
+//! direction, and free text can never show up. A command fires as soon as the partial
+//! result confirms it, so "down down down up up up" steers as fast as it is said. Every
+//! result becomes a `snake-input` event.
 //!
 //! Exactly one session lives at a time: a new start cancels the old one and waits for
 //! it before touching the microphone, and leaving the game (`snake_stop`), destroying
@@ -23,7 +24,7 @@ use crate::vosk;
 
 pub const EVENT: &str = "snake-input";
 
-/// The whole vocabulary. Anything else is "[unk]".
+/// The four commands the game understands.
 const COMMANDS: [&str; 4] = ["up", "down", "left", "right"];
 /// Audio handed to the recognizer at once: 50 ms.
 const BLOCK_MS: u32 = 50;
@@ -35,8 +36,51 @@ const LEVEL_MS: u32 = 70;
 const NO_SIGNAL_MS: u32 = 4000;
 const MIC_OPEN_TIMEOUT: Duration = Duration::from_secs(6);
 
-fn command_of(word: &str) -> Option<&'static str> {
-    COMMANDS.iter().copied().find(|c| *c == word)
+/// One spoken language: its model and its whole vocabulary. Anything else is "[unk]".
+pub struct Lang {
+    pub code: &'static str,
+    pub culture: &'static str,
+    pub model: &'static vosk::Asset,
+    /// Spoken word to command.
+    pub words: &'static [(&'static str, &'static str)],
+    /// Words that are in the grammar only to catch other speech. The small German model
+    /// matches almost anything to a command instead of "[unk]" ("hallo" became "hoch");
+    /// with these decoys chatter and look-alikes land on a word that does nothing.
+    pub decoys: &'static [&'static str],
+}
+
+pub static EN: Lang = Lang {
+    code: "en",
+    culture: "en-US",
+    model: &vosk::MODEL_EN,
+    words: &[("up", "up"), ("down", "down"), ("left", "left"), ("right", "right")],
+    // "[unk]" already rejects other speech in English.
+    decoys: &[],
+};
+
+pub static DE: Lang = Lang {
+    code: "de",
+    culture: "de-DE",
+    model: &vosk::MODEL_DE,
+    words: &[("hoch", "up"), ("oben", "up"), ("runter", "down"), ("unten", "down"), ("links", "left"), ("rechts", "right")],
+    decoys: &[
+        // Everyday words and fillers.
+        "ja", "nein", "und", "der", "die", "das", "ist", "ich", "du", "wir", "es", "nicht", "mit", "so",
+        "jetzt", "gut", "mal", "warte", "stopp", "weiter", "schnell", "langsam", "mist", "oh", "ach", "okay",
+        "spiel", "schlange", "essen", "wand", "fenster", "morgen", "haus",
+    ],
+};
+
+impl Lang {
+    /// "de", "de-DE", "DE" give German, everything else English.
+    fn pick(code: &str) -> &'static Lang {
+        if code.trim().get(..2).is_some_and(|c| c.eq_ignore_ascii_case("de")) { &DE } else { &EN }
+    }
+
+    /// The command and the static spelling of a recognized word.
+    fn lookup(&self, word: &str) -> Option<(&'static str, &'static str)> {
+        self.words.iter().find(|(w, _)| *w == word).map(|(w, c)| (*c, *w))
+    }
 }
 
 // ------------------------------------------------------------------ events
@@ -45,13 +89,15 @@ fn command_of(word: &str) -> Option<&'static str> {
 #[derive(Debug, Clone, PartialEq, Serialize)]
 #[serde(tag = "kind", rename_all = "camelCase")]
 pub enum SnakeEvent {
-    /// Listening; `cultures` is ["en-US"]. `feed` is always false: there is no free text.
+    /// Listening; `cultures` is ["en-US"] or ["de-DE"]. `feed` is always false: there is no
+    /// free text.
     Ready { cultures: Vec<String>, feed: bool },
     /// Microphone level 0..100.
     Level { value: u8 },
-    /// A direction the recognizer is about to confirm, for a dimmed preview; empty clears it.
+    /// The spoken word the recognizer is about to confirm, for a dimmed preview; empty
+    /// clears it.
     Partial { text: String },
-    /// A command to apply. `word` is the recognized word, here always the command.
+    /// A command to apply. `word` is the spoken word, e.g. "links" for left.
     Heard { command: String, confidence: f32, word: String },
     /// Speech that matched no command.
     Rejected,
@@ -106,11 +152,16 @@ fn parse(json: &str) -> Parsed {
 #[derive(Debug, Clone, PartialEq)]
 struct Hit {
     command: &'static str,
+    word: &'static str,
     confidence: f32,
 }
 
-fn hits(parsed: &Parsed) -> Vec<Hit> {
-    parsed.words.iter().filter_map(|(word, conf)| command_of(word).map(|command| Hit { command, confidence: *conf })).collect()
+fn hits(lang: &Lang, parsed: &Parsed) -> Vec<Hit> {
+    parsed
+        .words
+        .iter()
+        .filter_map(|(word, conf)| lang.lookup(word).map(|(command, word)| Hit { command, word, confidence: *conf }))
+        .collect()
 }
 
 /// Command words of the running utterance. Partial results grow and are sometimes
@@ -121,7 +172,7 @@ fn hits(parsed: &Parsed) -> Vec<Hit> {
 #[derive(Default)]
 struct Utterance {
     fired: Vec<&'static str>,
-    /// The newest, not yet fired command: position, command, first seen (ms).
+    /// The newest, not yet fired command: position, spoken word, first seen (ms).
     pending: Option<(usize, &'static str, u64)>,
 }
 
@@ -147,21 +198,21 @@ impl Utterance {
         let last = new.pop().expect("at least one new hit");
         let at = done + new.len();
         match self.pending {
-            Some((i, command, since)) if i == at && command == last.command => {
+            Some((i, word, since)) if i == at && word == last.word => {
                 if now >= since + STABLE_MS {
                     new.push(last);
                     self.pending = None;
                 }
             }
-            _ => self.pending = Some((at, last.command, now)),
+            _ => self.pending = Some((at, last.word, now)),
         }
         self.fired.extend(new.iter().map(|h| h.command));
         new
     }
 
-    /// The command waiting for confirmation, for the dimmed preview.
+    /// The spoken word waiting for confirmation, for the dimmed preview.
     fn pending(&self) -> Option<&'static str> {
-        self.pending.map(|(_, command, _)| command)
+        self.pending.map(|(_, word, _)| word)
     }
 
     fn finish(&mut self, hits: Vec<Hit>) -> Finished {
@@ -174,28 +225,46 @@ impl Utterance {
     }
 }
 
+/// The grammar of a language: those of its words and decoys the model knows. Fails with
+/// the commands that would be left without a word.
+fn grammar(lang: &Lang, knows: impl Fn(&str) -> bool) -> Result<Vec<&'static str>, Vec<&'static str>> {
+    let mut known = Vec::new();
+    for (word, command) in lang.words {
+        if knows(word) {
+            known.push((*word, *command));
+        } else {
+            log::warn!("voice snake: the {} model does not know '{word}'", lang.code);
+        }
+    }
+    let missing: Vec<&'static str> = COMMANDS.iter().copied().filter(|c| !known.iter().any(|(_, k)| k == c)).collect();
+    if !missing.is_empty() {
+        return Err(missing);
+    }
+    let decoys = lang.decoys.iter().copied().filter(|w| knows(w));
+    Ok(known.into_iter().map(|(w, _)| w).chain(decoys).collect())
+}
+
 // ------------------------------------------------------------------ engine
 
 /// The recognizer and its bookkeeping.
 struct Engine {
+    lang: &'static Lang,
     rec: vosk::Recognizer,
     utterance: Utterance,
     rate: u32,
     samples: u64,
-    /// Command shown as pending in the frontend.
+    /// Word shown as pending in the frontend.
     shown: Option<&'static str>,
     revised: usize,
 }
 
 impl Engine {
-    fn new(model: &Arc<vosk::Model>, rate: u32) -> Result<Engine, String> {
-        let mut grammar: Vec<&str> = COMMANDS.iter().copied().filter(|w| model.knows(w)).collect();
-        if grammar.len() < COMMANDS.len() {
-            return Err("The voice model does not know the command words.".into());
-        }
+    fn new(lang: &'static Lang, model: &Arc<vosk::Model>, rate: u32) -> Result<Engine, String> {
+        let mut grammar = grammar(lang, |w| model.knows(w))
+            .map_err(|missing| format!("The voice model has no word for {}.", missing.join(", ")))?;
         grammar.push("[unk]");
         let rec = vosk::Recognizer::new(model, rate, &grammar)?;
-        Ok(Engine { rec, utterance: Utterance::default(), rate, samples: 0, shown: None, revised: 0 })
+        Ok(Engine { lang, rec, utterance: Utterance::default(), rate, samples: 0, shown: None, revised: 0 })
     }
 
     /// Audio position in ms.
@@ -220,13 +289,13 @@ impl Engine {
     fn take(&mut self, json: &str, ended: bool) -> Vec<SnakeEvent> {
         let parsed = parse(json);
         let (new, rejected) = if ended {
-            let done = self.utterance.finish(hits(&parsed));
+            let done = self.utterance.finish(hits(self.lang, &parsed));
             self.revised += done.revised;
             // "[unk]" alone: the player said something, just not a direction.
             (done.new, done.total == 0 && !parsed.text.is_empty())
         } else {
             let now = self.now_ms();
-            (self.utterance.partial(hits(&parsed), now), false)
+            (self.utterance.partial(hits(self.lang, &parsed), now), false)
         };
         let mut out = Vec::new();
         let pending = self.utterance.pending();
@@ -234,7 +303,7 @@ impl Engine {
             self.shown = pending;
             out.push(SnakeEvent::Partial { text: pending.unwrap_or("").into() });
         }
-        out.extend(new.into_iter().map(|h| SnakeEvent::Heard { command: h.command.into(), confidence: h.confidence, word: h.command.into() }));
+        out.extend(new.into_iter().map(|h| SnakeEvent::Heard { command: h.command.into(), confidence: h.confidence, word: h.word.into() }));
         if rejected {
             out.push(SnakeEvent::Rejected);
         }
@@ -437,20 +506,20 @@ where
 
 // ------------------------------------------------------------------ session
 
-/// Everything a session needs on disk: the native library and the English model.
-fn assets() -> Option<[&'static vosk::Asset; 2]> {
-    vosk::LIBRARY.as_ref().map(|library| [library, &vosk::MODEL_EN])
+/// Everything a session needs on disk: the native library and the model of its language.
+fn assets(lang: &Lang) -> Option<[&'static vosk::Asset; 2]> {
+    vosk::LIBRARY.as_ref().map(|library| [library, lang.model])
 }
 
-fn run_session(cancel: &AtomicBool, emit: &Emit) {
-    if let Err((code, detail)) = listen(cancel, emit) {
+fn run_session(lang: &'static Lang, cancel: &AtomicBool, emit: &Emit) {
+    if let Err((code, detail)) = listen(lang, cancel, emit) {
         log::warn!("voice snake: {code} {detail}");
         emit(SnakeEvent::Error { code: code.into(), detail });
     }
 }
 
-fn listen(cancel: &AtomicBool, emit: &Emit) -> Result<(), Fail> {
-    let assets = assets().ok_or(("unsupported-platform", String::new()))?;
+fn listen(lang: &'static Lang, cancel: &AtomicBool, emit: &Emit) -> Result<(), Fail> {
+    let assets = assets(lang).ok_or(("unsupported-platform", String::new()))?;
     let installed = vosk::install(&assets, cancel, &mut |step| {
         emit(SnakeEvent::Download {
             stage: step.stage.into(),
@@ -466,7 +535,7 @@ fn listen(cancel: &AtomicBool, emit: &Emit) -> Result<(), Fail> {
     }
 
     let api = vosk::api().map_err(|e| ("engine-failed", e))?;
-    let model = vosk::Model::load(&api, &vosk::path(&vosk::MODEL_EN)).map_err(|e| ("engine-failed", e))?;
+    let model = vosk::Model::load(&api, &vosk::path(lang.model)).map_err(|e| ("engine-failed", e))?;
     if cancel.load(Ordering::Relaxed) {
         return Ok(());
     }
@@ -474,9 +543,9 @@ fn listen(cancel: &AtomicBool, emit: &Emit) -> Result<(), Fail> {
     let (tx, rx) = mpsc::channel::<Vec<i16>>();
     let mic = Mic::start(&crate::settings::current().microphone, tx)?;
     let rate = mic.rate;
-    let mut engine = Engine::new(&model, rate).map_err(|e| ("engine-failed", e))?;
-    log::info!("voice snake listening at {rate} Hz");
-    emit(SnakeEvent::Ready { cultures: vec!["en-US".into()], feed: false });
+    let mut engine = Engine::new(lang, &model, rate).map_err(|e| ("engine-failed", e))?;
+    log::info!("voice snake listening at {rate} Hz ({})", lang.code);
+    emit(SnakeEvent::Ready { cultures: vec![lang.culture.into()], feed: false });
 
     let mut meter = Meter::new(rate);
     let block_len = (rate * BLOCK_MS / 1000).max(1) as usize;
@@ -528,7 +597,7 @@ fn slot() -> MutexGuard<'static, Option<Listener>> {
 
 /// Start a session, replacing any running one. Events go to `emit` from the session
 /// thread; `Closed` is always the last one.
-fn start_session(session: String, emit: Emit) -> Result<(), String> {
+fn start_session(session: String, lang: &'static Lang, emit: Emit) -> Result<(), String> {
     let mut guard = slot();
     let previous = guard.take();
     if let Some(old) = &previous {
@@ -545,7 +614,7 @@ fn start_session(session: String, emit: Emit) -> Result<(), String> {
                 let _ = old.thread.join();
             }
             if !flag.load(Ordering::Relaxed) {
-                run_session(&flag, &emit);
+                run_session(lang, &flag, &emit);
             }
             emit(SnakeEvent::Closed);
             drop(done_tx);
@@ -589,19 +658,24 @@ pub fn snake_stop(session: String) {
     stop_session(&session, Duration::ZERO);
 }
 
-/// Start listening for `session`. `language` is accepted for compatibility and ignored:
-/// the four English directions are the whole vocabulary. Fails right away with
-/// "unsupported-platform" where no Vosk build exists.
+/// Start listening for `session` in `language` ("de" or "en"; without it, Spechy's
+/// spoken language). Fails right away with "unsupported-platform" where no Vosk build
+/// exists.
 #[tauri::command]
 pub fn snake_start(app: tauri::AppHandle, session: String, language: Option<String>) -> Result<(), String> {
     use tauri::Emitter;
-    let _ = language;
-    if assets().is_none() {
+    let code = language
+        .filter(|l| !l.trim().is_empty())
+        .or_else(|| crate::settings::current().spoken_language().map(String::from))
+        .unwrap_or_default();
+    let lang = Lang::pick(&code);
+    if assets(lang).is_none() {
         return Err("unsupported-platform".into());
     }
     let id = session.clone();
     start_session(
         session,
+        lang,
         Arc::new(move |event: SnakeEvent| {
             let _ = app.emit(EVENT, Message { session: &id, event: &event });
         }),
@@ -613,7 +687,7 @@ mod tests {
     use super::*;
 
     fn hits_of(commands: &[&'static str]) -> Vec<Hit> {
-        commands.iter().map(|c| Hit { command: c, confidence: 1.0 }).collect()
+        commands.iter().map(|c| Hit { command: c, word: c, confidence: 1.0 }).collect()
     }
 
     fn names(hits: &[Hit]) -> Vec<&'static str> {
@@ -700,23 +774,91 @@ mod tests {
         let p = parse(r#"{"partial_result":[{"conf":1.0,"end":1.2,"start":0.9,"word":"left"},{"conf":0.6,"end":1.5,"start":1.3,"word":"[unk]"}],"partial":"left [unk]"}"#);
         assert_eq!(p.text, "left [unk]");
         assert_eq!(p.words, vec![("left".to_string(), 1.0), ("[unk]".to_string(), 0.6)]);
-        assert_eq!(names(&hits(&p)), ["left"]);
+        assert_eq!(names(&hits(&EN, &p)), ["left"]);
         let p = parse(r#"{"partial" : "down up"}"#);
-        assert_eq!(names(&hits(&p)), ["down", "up"]);
+        assert_eq!(names(&hits(&EN, &p)), ["down", "up"]);
         let p = parse(r#"{"result":[{"conf":0.81,"end":2.0,"start":1.6,"word":"right"}],"text":"right"}"#);
-        assert_eq!(hits(&p), vec![Hit { command: "right", confidence: 0.81 }]);
+        assert_eq!(hits(&EN, &p), vec![Hit { command: "right", word: "right", confidence: 0.81 }]);
         assert_eq!(parse(r#"{"text" : ""}"#), Parsed::default());
         assert_eq!(parse("not json"), Parsed::default());
     }
 
     #[test]
-    fn only_the_four_directions_are_commands() {
-        for c in COMMANDS {
-            assert_eq!(command_of(c), Some(c));
+    fn each_language_maps_only_its_own_words() {
+        for (word, command) in [("up", "up"), ("down", "down"), ("left", "left"), ("right", "right")] {
+            assert_eq!(EN.lookup(word), Some((command, word)));
+        }
+        for (word, command) in [("hoch", "up"), ("oben", "up"), ("runter", "down"), ("unten", "down"), ("links", "left"), ("rechts", "right")] {
+            assert_eq!(DE.lookup(word), Some((command, word)));
         }
         for w in ["[unk]", "let", "start", "pause", "hoch", "links", ""] {
-            assert_eq!(command_of(w), None);
+            assert_eq!(EN.lookup(w), None);
         }
+        for w in ["[unk]", "up", "left", "rechnen", "start", "los", ""] {
+            assert_eq!(DE.lookup(w), None);
+        }
+        let p = parse(r#"{"partial" : "links [unk] hoch unten"}"#);
+        let found: Vec<_> = hits(&DE, &p).iter().map(|h| (h.command, h.word)).collect();
+        assert_eq!(found, [("left", "links"), ("up", "hoch"), ("down", "unten")]);
+        assert!(hits(&EN, &p).is_empty());
+        for lang in [&EN, &DE] {
+            for c in COMMANDS {
+                assert!(lang.words.iter().any(|(_, k)| *k == c), "{} has a word for {c}", lang.code);
+            }
+        }
+    }
+
+    #[test]
+    fn language_choice() {
+        for (code, want) in [("de", "de"), ("de-DE", "de"), ("DE", "de"), (" de ", "de"), ("en", "en"), ("en-GB", "en"), ("", "en"), ("auto", "en"), ("fr", "en"), ("d", "en")] {
+            assert_eq!(Lang::pick(code).code, want, "{code:?}");
+        }
+        assert_eq!(DE.model.dir, "vosk-model-small-de-0.15");
+        assert_eq!(EN.model.dir, "vosk-model-small-en-us-0.15");
+    }
+
+    #[test]
+    fn grammar_drops_unknown_words_but_needs_every_direction() {
+        let commands_only = |g: Vec<&'static str>| g.into_iter().filter(|w| DE.lookup(w).is_some()).collect::<Vec<_>>();
+        assert_eq!(commands_only(grammar(&DE, |_| true).unwrap()), ["hoch", "oben", "runter", "unten", "links", "rechts"]);
+        assert_eq!(commands_only(grammar(&DE, |w| w != "oben").unwrap()), ["hoch", "runter", "unten", "links", "rechts"]);
+        // Decoys the model does not know are left out, decoys never map to a command.
+        assert_eq!(grammar(&DE, |_| true).unwrap().len(), DE.words.len() + DE.decoys.len());
+        assert!(!grammar(&DE, |w| w != "doch").unwrap().contains(&"doch"));
+        assert!(DE.decoys.iter().all(|d| DE.lookup(d).is_none()));
+        assert_eq!(grammar(&DE, |w| w != "rechts"), Err(vec!["right"]));
+        assert_eq!(grammar(&EN, |_| true).unwrap(), ["up", "down", "left", "right"]);
+        assert_eq!(grammar(&EN, |_| false), Err(COMMANDS.to_vec()));
+    }
+
+    #[test]
+    fn german_spam_fires_with_the_spoken_words() {
+        let said = ["runter", "unten", "runter", "hoch", "oben", "hoch"];
+        let mut u = Utterance::default();
+        let mut fired = Vec::new();
+        let mut t = 0;
+        let hits_de = |n: usize| -> Vec<Hit> {
+            said[..n].iter().map(|w| { let (command, word) = DE.lookup(w).unwrap(); Hit { command, word, confidence: 1.0 } }).collect()
+        };
+        for n in 1..=said.len() {
+            for _ in 0..5 {
+                t += 50;
+                fired.extend(u.partial(hits_de(n), t));
+                if n == 1 {
+                    assert_eq!(u.pending(), Some("runter").filter(|_| fired.is_empty()));
+                }
+            }
+        }
+        fired.extend(u.finish(hits_de(said.len())).new);
+        assert_eq!(fired.iter().map(|h| h.word).collect::<Vec<_>>(), said);
+        assert_eq!(names(&fired), ["down", "down", "down", "up", "up", "up"]);
+        // "hoch" flipping to "oben" at the same position is a new pending word.
+        let mut u = Utterance::default();
+        let one = |w: &str| { let (command, word) = DE.lookup(w).unwrap(); vec![Hit { command, word, confidence: 1.0 }] };
+        assert!(u.partial(one("hoch"), 0).is_empty());
+        assert!(u.partial(one("oben"), 250).is_empty());
+        assert_eq!(u.pending(), Some("oben"));
+        assert_eq!(u.partial(one("oben"), 550).iter().map(|h| h.word).collect::<Vec<_>>(), ["oben"]);
     }
 
     #[test]
@@ -741,8 +883,8 @@ mod tests {
     fn events_serialize_for_the_frontend() {
         let json = |e: SnakeEvent| serde_json::to_value(Message { session: "s1", event: &e }).unwrap();
         assert_eq!(
-            json(SnakeEvent::Heard { command: "up".into(), confidence: 0.5, word: "up".into() }),
-            serde_json::json!({ "session": "s1", "kind": "heard", "command": "up", "confidence": 0.5, "word": "up" })
+            json(SnakeEvent::Heard { command: "left".into(), confidence: 0.5, word: "links".into() }),
+            serde_json::json!({ "session": "s1", "kind": "heard", "command": "left", "confidence": 0.5, "word": "links" })
         );
         assert_eq!(json(SnakeEvent::Closed), serde_json::json!({ "session": "s1", "kind": "closed" }));
         assert_eq!(
@@ -768,10 +910,10 @@ mod tests {
 
     // -------------------------------------------------------------- end to end (silent)
 
-    /// Download (once, into the real data folder) and load the English model.
-    fn model() -> Arc<vosk::Model> {
+    /// Download (once, into the real data folder) and load the model of `lang`.
+    fn model(lang: &Lang) -> Arc<vosk::Model> {
         let mut last = -1i32;
-        vosk::install(&assets().unwrap(), &AtomicBool::new(false), &mut |s| {
+        vosk::install(&assets(lang).unwrap(), &AtomicBool::new(false), &mut |s| {
             let pct = (s.progress * 100.0) as i32;
             if pct / 20 != last / 20 {
                 last = pct;
@@ -781,8 +923,11 @@ mod tests {
         .expect("install");
         let api = vosk::api().expect("library");
         let t = std::time::Instant::now();
-        let model = vosk::Model::load(&api, &vosk::path(&vosk::MODEL_EN)).expect("model");
-        println!("model loaded in {:?}", t.elapsed());
+        let model = vosk::Model::load(&api, &vosk::path(lang.model)).expect("model");
+        println!("{} model loaded in {:?}", lang.code, t.elapsed());
+        for word in lang.words.iter().map(|(w, _)| *w).chain(["[unk]", "<unk>", "<UNK>"]) {
+            println!("  {} '{word}' in vocabulary: {}", lang.code, model.knows(word));
+        }
         model
     }
 
@@ -807,14 +952,25 @@ mod tests {
         dir
     }
 
-    /// Samples of a WAV with the silence at both ends cut off.
-    fn trimmed(path: &std::path::Path) -> Vec<i16> {
-        let mut reader = hound::WavReader::open(path).unwrap();
+    /// Voice names of the `<voice>_<word>.wav` files in `dir`.
+    fn voices_in(dir: &std::path::Path) -> Vec<String> {
+        let mut voices: Vec<String> = std::fs::read_dir(dir)
+            .map(|d| d.flatten().filter_map(|e| e.file_name().to_string_lossy().split_once('_').map(|(a, _)| a.to_string())).collect())
+            .unwrap_or_default();
+        voices.sort();
+        voices.dedup();
+        voices
+    }
+
+    /// Samples of a WAV with the silence at both ends cut off, and its sample rate.
+    fn trimmed(path: &std::path::Path) -> (Vec<i16>, u32) {
+        let mut reader = hound::WavReader::open(path).unwrap_or_else(|e| panic!("{}: {e}", path.display()));
+        let rate = reader.spec().sample_rate;
         let s: Vec<i16> = reader.samples::<i16>().map(|x| x.unwrap()).collect();
         let loud = |x: &i16| x.unsigned_abs() > 300;
         let a = s.iter().position(loud).unwrap_or(0);
         let b = s.iter().rposition(loud).map(|i| i + 1).unwrap_or(s.len());
-        s[a..b].to_vec()
+        (s[a..b].to_vec(), rate)
     }
 
     /// Quiet noise instead of digital zeros, like a real room (about -66 dB).
@@ -855,6 +1011,31 @@ mod tests {
         Clip { name, samples, expected, ends }
     }
 
+    /// Clips for one voice: every command word alone, every other word alone (must not
+    /// fire) and three spam sequences.
+    fn clips_for(
+        voice: &str,
+        lang: &Lang,
+        word: &dyn Fn(&str) -> Vec<i16>,
+        others: &[&str],
+        spam: &[(&str, u32)],
+        rate: u32,
+    ) -> Vec<Clip> {
+        let mut clips = Vec::new();
+        for (w, c) in lang.words {
+            clips.push(clip(format!("{voice} {w}"), &[(word(w), Some(*c))], rate, 0));
+        }
+        for o in others {
+            let short: String = o.chars().take(24).collect();
+            clips.push(clip(format!("{voice} \"{short}\" (no command)"), &[(word(o), None)], rate, 0));
+        }
+        for (sequence, gap) in spam {
+            let words: Vec<_> = sequence.split(' ').map(|w| (word(w), lang.lookup(w).map(|(c, _)| c))).collect();
+            clips.push(clip(format!("{voice} {sequence}"), &words, rate, *gap));
+        }
+        clips
+    }
+
     struct Run {
         heard: Vec<(String, u64)>,
         rejected: usize,
@@ -863,14 +1044,14 @@ mod tests {
     }
 
     /// Feed a clip in 50 ms blocks, exactly like the microphone loop.
-    fn run_clip(model: &Arc<vosk::Model>, clip: &Clip, rate: u32) -> Run {
-        let mut engine = Engine::new(model, rate).unwrap();
+    fn run_clip(lang: &'static Lang, model: &Arc<vosk::Model>, clip: &Clip, rate: u32) -> Run {
+        let mut engine = Engine::new(lang, model, rate).unwrap();
         let block = (rate * BLOCK_MS / 1000) as usize;
         let mut run = Run { heard: Vec::new(), rejected: 0, revised: 0, secs: 0.0 };
         let take = |events: Vec<SnakeEvent>, at: u64, run: &mut Run| {
             for e in events {
                 match e {
-                    SnakeEvent::Heard { command, .. } => run.heard.push((command, at)),
+                    SnakeEvent::Heard { command, word, .. } => run.heard.push((format!("{command}:{word}"), at)),
                     SnakeEvent::Rejected => run.rejected += 1,
                     _ => {}
                 }
@@ -888,64 +1069,27 @@ mod tests {
         run
     }
 
-    /// Silent end-to-end check with the real Vosk engine: Windows TTS words (written to
-    /// files, never played) are stitched into clips with room noise. Reports hit rate,
-    /// false fires on other words, the delay from the end of each word to its command
-    /// (audio time; the per-block processing time printed at the end comes on top) and
-    /// CPU per second of audio. `SNAKE_RATE` sets the sample rate (default 48000, like
-    /// most microphones).
-    /// `cargo test --lib snake_vosk -- --ignored --nocapture --test-threads=1`
-    #[cfg(windows)]
-    #[test]
-    #[ignore]
-    fn snake_vosk_recognizes_tts_commands() {
-        let rate: u32 = std::env::var("SNAKE_RATE").ok().and_then(|r| r.parse().ok()).unwrap_or(48_000);
-        let model = model();
-        // Near misses ("let", "light", "write", "dawn", "app") and unrelated speech,
-        // including German sentences read by an English voice (no German voice exists).
-        let others = [
-            "let", "light", "write", "dawn", "app", "hello", "banana", "start", "pause",
-            "Ich gehe heute Abend mit meinen Freunden in die Stadt",
-            "Das Wetter ist schoen und wir trinken Kaffee",
-        ];
-        let all: Vec<&str> = COMMANDS.iter().chain(others.iter()).copied().collect();
-        let dir = synthesize(&all, rate);
-        let mut voices: Vec<String> = std::fs::read_dir(&dir).unwrap().flatten()
-            .filter_map(|e| e.file_name().to_string_lossy().split_once('_').map(|(a, _)| a.to_string())).collect();
-        voices.sort();
-        voices.dedup();
-        let word = |voice: &str, w: &str| trimmed(&dir.join(format!("{voice}_{w}.wav")));
+    struct Score {
+        hit: usize,
+        expected: usize,
+        fired_on_other: usize,
+        other: usize,
+    }
 
-        let mut clips = Vec::new();
-        for voice in &voices {
-            for c in COMMANDS {
-                clips.push(clip(format!("{voice} {c}"), &[(word(voice, c), Some(c))], rate, 0));
-            }
-            for o in others {
-                let short: String = o.chars().take(24).collect();
-                clips.push(clip(format!("{voice} \"{short}\" (no command)"), &[(word(voice, o), None)], rate, 0));
-            }
-            for (label, seq, gap) in [
-                ("down down down up up up", vec!["down", "down", "down", "up", "up", "up"], 120),
-                ("left right left right", vec!["left", "right", "left", "right"], 120),
-                ("fast down up down up", vec!["down", "up", "down", "up"], 40),
-            ] {
-                let words: Vec<_> = seq.iter().map(|w| (word(voice, w), command_of(w))).collect();
-                clips.push(clip(format!("{voice} {label}"), &words, rate, gap));
-            }
-        }
-
-        let (mut expected, mut hit, mut extra, mut false_clips, mut other_clips) = (0usize, 0usize, 0usize, 0usize, 0usize);
-        let (mut secs, mut audio, mut revised, mut delays) = (0f64, 0f64, 0usize, Vec::<i64>::new());
-        for clip in &clips {
-            let run = run_clip(&model, clip, rate);
+    /// Run every clip, print one line per clip and a summary.
+    fn evaluate(label: &str, lang: &'static Lang, model: &Arc<vosk::Model>, clips: &[Clip], rate: u32) -> Score {
+        let mut score = Score { hit: 0, expected: 0, fired_on_other: 0, other: 0 };
+        let (mut extra, mut secs, mut audio, mut revised, mut delays) = (0usize, 0f64, 0f64, 0usize, Vec::<i64>::new());
+        println!("--- {label}");
+        for clip in clips {
+            let run = run_clip(lang, model, clip, rate);
             audio += clip.samples.len() as f64 / rate as f64;
             secs += run.secs;
             revised += run.revised;
             // In-order match of fired commands against the expected ones.
             let (mut j, mut matched) = (0, 0);
             for (i, want) in clip.expected.iter().enumerate() {
-                while j < run.heard.len() && run.heard[j].0 != *want {
+                while j < run.heard.len() && !run.heard[j].0.starts_with(&format!("{want}:")) {
                     j += 1;
                 }
                 if j < run.heard.len() {
@@ -954,12 +1098,12 @@ mod tests {
                     j += 1;
                 }
             }
-            expected += clip.expected.len();
-            hit += matched;
+            score.expected += clip.expected.len();
+            score.hit += matched;
             extra += run.heard.len() - matched;
             if clip.expected.is_empty() {
-                other_clips += 1;
-                false_clips += !run.heard.is_empty() as usize;
+                score.other += 1;
+                score.fired_on_other += !run.heard.is_empty() as usize;
             }
             let ok = matched == clip.expected.len() && run.heard.len() == matched;
             println!(
@@ -974,18 +1118,102 @@ mod tests {
         delays.sort();
         let mean = delays.iter().sum::<i64>() as f64 / delays.len().max(1) as f64;
         println!(
-            "{rate} Hz: hits {hit}/{expected} ({:.0} %), extra fires {extra}, other speech firing {false_clips}/{other_clips}, \
-             fired then revised {revised}; delay after word end: mean {mean:.0} ms, median {} ms, max {} ms",
-            100.0 * hit as f64 / expected as f64,
+            "{label}, {rate} Hz: hits {}/{} ({:.0} %), extra fires {extra}, other speech firing {}/{}, fired then revised {revised}; \
+             delay after word end: mean {mean:.0} ms, median {} ms, max {} ms; CPU {:.1} % of one core",
+            score.hit,
+            score.expected,
+            100.0 * score.hit as f64 / score.expected.max(1) as f64,
+            score.fired_on_other,
+            score.other,
             delays.get(delays.len() / 2).unwrap_or(&0),
-            delays.last().unwrap_or(&0)
+            delays.last().unwrap_or(&0),
+            100.0 * secs / audio
         );
-        println!(
-            "CPU: {:.1} % of one core per second of audio, a {BLOCK_MS} ms block takes {:.2} ms",
-            100.0 * secs / audio,
-            secs * 1000.0 / (audio * 1000.0 / BLOCK_MS as f64)
-        );
-        assert!(hit * 10 >= expected * 9, "hit rate below 90 %");
+        score
+    }
+
+    const EN_OTHERS: [&str; 11] = [
+        "let", "light", "write", "dawn", "app", "hello", "banana", "start", "pause",
+        "Ich gehe heute Abend mit meinen Freunden in die Stadt",
+        "Das Wetter ist schoen und wir trinken Kaffee",
+    ];
+    const EN_SPAM: [(&str, u32); 3] = [("down down down up up up", 120), ("left right left right", 120), ("down up down up", 40)];
+
+    /// Silent end-to-end check with the real Vosk engine, English: Windows TTS words
+    /// (written to files, never played) are stitched into clips with room noise. Reports
+    /// hit rate, fires on other words (near misses like "let" are expected to land on a
+    /// direction), the delay from the end of each word to its command (audio time) and CPU.
+    /// `SNAKE_RATE` sets the sample rate (default 48000, like most microphones).
+    /// `cargo test --lib snake_vosk -- --ignored --nocapture --test-threads=1`
+    #[cfg(windows)]
+    #[test]
+    #[ignore]
+    fn snake_vosk_recognizes_english_tts() {
+        let rate: u32 = std::env::var("SNAKE_RATE").ok().and_then(|r| r.parse().ok()).unwrap_or(48_000);
+        let model = model(&EN);
+        let all: Vec<&str> = EN.words.iter().map(|(w, _)| *w).chain(EN_OTHERS).collect();
+        let dir = synthesize(&all, rate);
+        let mut clips = Vec::new();
+        for voice in voices_in(&dir) {
+            let word = |w: &str| trimmed(&dir.join(format!("{voice}_{w}.wav"))).0;
+            clips.extend(clips_for(&voice, &EN, &word, &EN_OTHERS, &EN_SPAM, rate));
+        }
+        let score = evaluate("English", &EN, &model, &clips, rate);
+        assert!(score.hit * 10 >= score.expected * 9, "hit rate below 90 %");
+    }
+
+    /// German end-to-end check. No German Windows voice exists, so the WAVs come from a
+    /// folder (`SNAKE_DE_WAV_DIR`, default `%TEMP%\spechy-vosk-wavs-de`, files
+    /// `<voice>_<word>.wav`, mono 16 bit, e.g. made with edge-tts from the command words
+    /// only). Without that folder only the model, its vocabulary and the grammar are
+    /// checked. In every case the English TTS commands run through the German grammar and
+    /// must not fire.
+    /// `cargo test --lib snake_vosk -- --ignored --nocapture --test-threads=1`
+    #[cfg(windows)]
+    #[test]
+    #[ignore]
+    fn snake_vosk_recognizes_german() {
+        let model = model(&DE);
+        assert!(DE.words.iter().all(|(w, _)| model.knows(w)), "every German command word is in the vocabulary");
+        let unknown: Vec<_> = DE.decoys.iter().filter(|w| !model.knows(w)).collect();
+        println!("decoys not in the vocabulary (left out): {unknown:?}");
+        // The test words below are kept apart from the decoys, so the decoys are not tuned to them.
+        let others = ["hallo", "banane", "lecker", "rechnen", "linsen", "hocker", "start", "pause"];
+        let spam = [("runter runter runter hoch hoch hoch", 120), ("links rechts links rechts", 120), ("unten oben unten oben", 40)];
+        let dir = std::env::var("SNAKE_DE_WAV_DIR")
+            .map(std::path::PathBuf::from)
+            .unwrap_or_else(|_| std::env::temp_dir().join("spechy-vosk-wavs-de"));
+        let voices = voices_in(&dir);
+        if voices.is_empty() {
+            println!("no German WAVs in {}, only the model and grammar were checked", dir.display());
+        } else {
+            let rate = trimmed(&dir.join(format!("{}_hoch.wav", voices[0]))).1;
+            let mut clips = Vec::new();
+            for voice in &voices {
+                let word = |w: &str| {
+                    let (samples, r) = trimmed(&dir.join(format!("{voice}_{w}.wav")));
+                    assert_eq!(r, rate, "all German WAVs need the same sample rate");
+                    samples
+                };
+                clips.extend(clips_for(voice, &DE, &word, &others, &spam, rate));
+            }
+            let score = evaluate("German", &DE, &model, &clips, rate);
+            assert!(score.hit * 10 >= score.expected * 9, "hit rate below 90 %");
+        }
+
+        // English commands and phrases must not steer a German game.
+        let rate = 48_000;
+        let all: Vec<&str> = EN.words.iter().map(|(w, _)| *w).chain(EN_OTHERS).collect();
+        let en_dir = synthesize(&all, rate);
+        let mut clips = Vec::new();
+        for voice in voices_in(&en_dir) {
+            let word = |w: &str| trimmed(&en_dir.join(format!("{voice}_{w}.wav"))).0;
+            for w in &all {
+                clips.push(clip(format!("{voice} \"{}\" (English)", w.chars().take(24).collect::<String>()), &[(word(w), None)], rate, 0));
+            }
+        }
+        let score = evaluate("English speech into the German grammar", &DE, &model, &clips, rate);
+        println!("English speech fired German commands in {}/{} clips", score.fired_on_other, score.other);
     }
 
     /// Lifecycle with the real microphone (nothing is played or stored): a session gets
@@ -994,7 +1222,8 @@ mod tests {
     #[test]
     #[ignore]
     fn snake_session_lifecycle() {
-        let _ = model();
+        let _ = model(&EN);
+        let _ = model(&DE);
         let (tx, rx) = mpsc::channel::<(String, SnakeEvent)>();
         let emitter = |id: &str| -> Emit {
             let tx = Mutex::new(tx.clone());
@@ -1008,16 +1237,19 @@ mod tests {
             if let SnakeEvent::Error { code, detail } = &e {
                 panic!("{code}: {detail}");
             }
+            if let SnakeEvent::Ready { cultures, .. } = &e {
+                println!("{id} ready in {cultures:?}");
+            }
             let kind = serde_json::to_value(&e).unwrap()["kind"].as_str().unwrap().to_string();
             if id == session && kind == want {
                 break;
             }
         };
         let t = std::time::Instant::now();
-        start_session("a".into(), emitter("a")).unwrap();
+        start_session("a".into(), &EN, emitter("a")).unwrap();
         wait("ready", "a");
         println!("ready after {:?}", t.elapsed());
-        start_session("b".into(), emitter("b")).unwrap();
+        start_session("b".into(), &DE, emitter("b")).unwrap();
         wait("closed", "a");
         wait("ready", "b");
         snake_stop("a".into());

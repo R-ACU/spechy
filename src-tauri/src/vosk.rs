@@ -5,7 +5,7 @@
 //! and a PC that never plays Voice Snake never downloads or loads any of it.
 //!
 //! Layout under `<data dir>/vosk/`: one folder per archive, named like its top folder
-//! (`vosk-win64-0.3.45`, `vosk-model-small-en-us-0.15`). An archive is downloaded to
+//! (`vosk-win64-0.3.45`, `vosk-model-small-en-us-0.15`, `vosk-model-small-de-0.15`). An archive is downloaded to
 //! `<name>.zip.part`, checked (size and SHA-256), unpacked into `<name>.tmp` and only then
 //! renamed into place, so a broken or cancelled download never looks installed.
 
@@ -57,6 +57,15 @@ pub static LIBRARY: Option<Asset> = Some(Asset {
 /// No prebuilt library for this platform: Voice Snake stays on the keyboard.
 #[cfg(not(any(all(windows, target_arch = "x86_64"), all(target_os = "linux", target_arch = "x86_64"))))]
 pub static LIBRARY: Option<Asset> = None;
+
+pub static MODEL_DE: Asset = Asset {
+    label: "German voice model",
+    url: "https://alphacephei.com/vosk/models/vosk-model-small-de-0.15.zip",
+    size: 46_499_967,
+    sha256: "b7e53c90b1f0a38456f4cd62b366ecd58803cd97cd42b06438e2c131713d5e43",
+    dir: "vosk-model-small-de-0.15",
+    check: "am/final.mdl",
+};
 
 pub static MODEL_EN: Asset = Asset {
     label: "English voice model",

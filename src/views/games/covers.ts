@@ -106,11 +106,11 @@ const snake: Paint = (g) => {
 
 export const COVERS: Record<string, Paint> = { tower, snake };
 
-export function paintCover(canvas: HTMLCanvasElement, id: string) {
+export function paintCover(canvas: HTMLCanvasElement, id: string, painter?: (g: CanvasRenderingContext2D) => void) {
   canvas.width = COVER_W;
   canvas.height = COVER_H;
   const g = canvas.getContext("2d");
   if (!g) return;
   g.imageSmoothingEnabled = false;
-  COVERS[id]?.(g);
+  (painter ?? COVERS[id])?.(g);
 }

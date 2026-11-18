@@ -26,6 +26,28 @@
 
 @keyframes gm-card-in { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: translateY(0); } }
 
+/* ---------- reveal of a new game (Games.tsx, reveal.ts) ---------- */
+.gm-card { position: relative; }
+.gm-cover-wrap { position: relative; }
+.gm-card-veiled { cursor: default; }
+.gm-card-veiled .gm-card-meta { visibility: hidden; }
+.gm-card-veiled:hover { transform: none; background: var(--surface-2); border-color: var(--border); }
+.gm-veil { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; background: var(--surface-3); }
+.gm-veil-canvas { position: absolute; inset: 0; }
+.gm-veil-label {
+  position: relative; display: inline-flex; align-items: center; gap: 8px; padding: 8px 14px; border-radius: 999px;
+  background: var(--surface-2); color: var(--text-2); font-size: 13px; font-weight: 600;
+  animation: gm-veil-breathe 1.6s var(--ease) infinite alternate;
+}
+@keyframes gm-veil-breathe { from { transform: scale(1); opacity: 0.75; } to { transform: scale(1.04); opacity: 1; } }
+.gm-new {
+  position: absolute; top: 10px; left: 10px; padding: 3px 9px; border-radius: 999px;
+  background: var(--accent); color: var(--on-solid); font-size: 11.5px; font-weight: 700; letter-spacing: 0.02em;
+  box-shadow: var(--shadow-1);
+}
+.gm-confetti { position: absolute; inset: 0; pointer-events: none; overflow: visible; z-index: 2; }
+.gm-confetti span { position: absolute; border-radius: 1px; }
+
 /* ---------- play view ---------- */
 .gm-root-play { gap: 18px; }
 .gm-play-head { display: flex; align-items: center; gap: 14px; }
@@ -137,6 +159,7 @@
 }
 
 @media (prefers-reduced-motion: reduce) {
+  .gm-veil-label { animation: none; }
   .gm-card, .gm-stage-fade, .vs-line, .vs-count, .vs-last.pulse .vs-last-icon { animation: none; }
   .gm-card:hover, .gm-card:hover .gm-cover { transform: none; }
 }

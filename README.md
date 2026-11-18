@@ -42,7 +42,7 @@ Use it for emails, documents, chat messages, code explanations and prompts. Keep
 | **Choose your AI** | Groq, OpenRouter or custom OpenAI-compatible endpoints. Pick models from a searchable list. |
 | **Keep useful work** | Searchable dictation history, usage insights and a shortcut to paste your last dictation again. |
 | **Work comfortably** | Light, dark and system themes plus Halftone, ASCII and OLED; configurable shortcuts, microphone selection and optional launch at login. |
-| **Take a break** | Two small games: Pixel Tower and Voice Snake, steered offline by saying up, down, left or right. |
+| **Take a break** | Three small games: Pixel Tower, Comet Keeper and Voice Snake, steered offline by voice in English or German. New games are revealed in the Games tab when an update adds them. |
 
 ## Get started
 

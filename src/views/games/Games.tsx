@@ -1,10 +1,14 @@
 // Games tab: a hub of small games with pixel-art covers. Picking one grows its cover into
 // the play area with a short pixel progress bar (about half a second, no flashes), while
-// the game module loads lazily; Back or Escape returns to the hub.
+// the game module loads lazily; Back or Escape returns to the hub. A game added in an update is
+// revealed once when the hub first lists it: veiled card, fanfare, cover dissolving in, a small
+// pop and pixel confetti (no flashes), then a "New" badge until it is played.
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
-import { ArrowLeft, Keyboard, Mic, MousePointerClick, Trophy } from "lucide-react";
-import { GAMES, readBest, type GameInfo, type GameModule } from "./catalog";
+import { ArrowLeft, Keyboard, Mic, MousePointerClick, Sparkles, Trophy, type LucideIcon } from "lucide-react";
+import { useStore } from "../../lib/store";
+import { bestText, GAMES, isNewGame, markPlayed, markRevealed, needsReveal, readAllBests, type GameInfo, type GameModule } from "./catalog";
 import { paintCover } from "./covers";
+import { dissolveIn, playFanfare } from "./reveal";
 import "./games.css";
 
 interface Box { x: number; y: number; w: number; h: number }
@@ -26,17 +30,70 @@ function boxOf(el: Element): Box {
 
 function Cover({ id, className = "" }: { id: string; className?: string }) {
   const ref = useRef<HTMLCanvasElement>(null);
-  useEffect(() => { if (ref.current) paintCover(ref.current, id); }, [id]);
+  useEffect(() => { if (ref.current) paintCover(ref.current, id, GAMES.find((g) => g.id === id)?.cover); }, [id]);
   return <canvas ref={ref} className={`gm-cover ${className}`} aria-hidden="true" />;
 }
 
-const CONTROL_ICON = { tower: MousePointerClick, snake: Mic } as const;
+const CONTROL_ICON: Record<string, LucideIcon> = { tower: MousePointerClick, snake: Mic };
+const REVEAL_DELAY_MS = 900;
+const DISSOLVE_MS = 1300;
 
-function BestLabel({ best }: { best: number }) {
+/** The veiled cover of a game that is about to be revealed; dissolves the real cover in on `go`. */
+function RevealCover({ id, go, onDone }: { id: string; go: boolean; onDone: () => void }) {
+  const ref = useRef<HTMLCanvasElement>(null);
+  const done = useRef(onDone);
+  done.current = onDone;
+  useEffect(() => {
+    if (!go || !ref.current) return;
+    const src = document.createElement("canvas");
+    paintCover(src, id, GAMES.find((g) => g.id === id)?.cover);
+    return dissolveIn(ref.current, src, DISSOLVE_MS, () => done.current());
+  }, [go, id]);
+  return (
+    <div className="gm-veil">
+      <canvas ref={ref} className="gm-cover gm-veil-canvas" aria-hidden="true" />
+      {!go && (
+        <span className="gm-veil-label">
+          <Sparkles size={18} strokeWidth={2} aria-hidden="true" />
+          New game
+        </span>
+      )}
+    </div>
+  );
+}
+
+/** Pixel confetti over a card, colours from the theme tokens. Removes itself. */
+function confetti(card: HTMLElement): void {
+  if (prefersReducedMotion()) return;
+  const css = getComputedStyle(document.documentElement);
+  const colours = ["--accent", "--success", "--warn", "--text"].map((v) => css.getPropertyValue(v).trim()).filter(Boolean);
+  const layer = document.createElement("div");
+  layer.className = "gm-confetti";
+  card.appendChild(layer);
+  const w = card.clientWidth;
+  for (let i = 0; i < 34; i++) {
+    const p = document.createElement("span");
+    const size = 4 + Math.round(Math.random() * 3);
+    p.style.cssText = `width:${size}px;height:${size}px;left:${Math.round(w * (0.15 + Math.random() * 0.7))}px;top:${Math.round(40 + Math.random() * 60)}px;background:${colours[i % colours.length]}`;
+    layer.appendChild(p);
+    const dx = (Math.random() - 0.5) * 220, up = 60 + Math.random() * 90, fall = 160 + Math.random() * 140;
+    p.animate(
+      [
+        { transform: "translate(0, 0)", opacity: 1 },
+        { transform: `translate(${dx * 0.5}px, ${-up}px)`, opacity: 1, offset: 0.35 },
+        { transform: `translate(${dx}px, ${fall}px)`, opacity: 0 },
+      ],
+      { duration: 1300 + Math.random() * 600, easing: "cubic-bezier(0.2, 0.7, 0.4, 1)", fill: "forwards" },
+    );
+  }
+  window.setTimeout(() => layer.remove(), 2200);
+}
+
+function BestLabel({ text }: { text: string }) {
   return (
     <span className="gm-best">
       <Trophy size={14} strokeWidth={2} aria-hidden="true" />
-      {best > 0 ? `Best ${best}` : "No best yet"}
+      {text}
     </span>
   );
 }
@@ -93,11 +150,19 @@ function EnterOverlay({ id, from, stage, loaded, onDone }: {
 }
 
 export default function Games() {
+  const { settings } = useStore();
   const [mode, setMode] = useState<Mode>({ kind: "hub" });
+  // Games still waiting for their reveal (taken once when the hub opens), and the one revealing now.
+  const [veiled, setVeiled] = useState<string[]>(() => GAMES.filter((g) => needsReveal(g.id)).map((g) => g.id));
+  const [revealing, setRevealing] = useState<string | null>(null);
+  const [, refreshBadges] = useState(0);
   const [mod, setMod] = useState<GameModule | null>(null);
   const [loadError, setLoadError] = useState(false);
   const [overlay, setOverlay] = useState(false);
-  const [best, setBest] = useState<Record<string, number>>(() => Object.fromEntries(GAMES.map((g) => [g.id, readBest(g.bestKey)])));
+  // Records by storage key; a game with modes (Voice Snake) has one per mode.
+  const [best, setBest] = useState<Record<string, number>>(readAllBests);
+  /** The record the play header shows; null shows all records of the game. */
+  const [headerKey, setHeaderKey] = useState<string | null>(null);
   const rootRef = useRef<HTMLElement>(null);
   const stageRef = useRef<HTMLDivElement>(null);
   const coverRefs = useRef<Record<string, HTMLDivElement | null>>({});
@@ -109,8 +174,10 @@ export default function Games() {
     const cover = coverRefs.current[game.id];
     const from = cover && !prefersReducedMotion() ? boxOf(cover) : null;
     lastId.current = game.id;
+    markPlayed(game.id);
     setMod(null);
     setLoadError(false);
+    setHeaderKey(null);
     setOverlay(!!from);
     setMode({ kind: "play", id: game.id, from });
     game.load().then((m) => setMod(() => m), () => setLoadError(true));
@@ -120,7 +187,7 @@ export default function Games() {
     setMode({ kind: "hub" });
     setMod(null);
     setOverlay(false);
-    setBest(Object.fromEntries(GAMES.map((g) => [g.id, readBest(g.bestKey)])));
+    setBest(readAllBests());
   }, []);
 
   // Escape leaves a game, unless a dialog (Settings) is open on top.
@@ -142,9 +209,41 @@ export default function Games() {
   // The overlay needs the stage element, which exists only after the first play render.
   useLayoutEffect(() => { if (mode.kind === "play" && overlay) forceStage((n) => n + 1); }, [mode, overlay]);
 
-  const onBest = useCallback((value: number) => {
-    const id = lastId.current;
-    if (id) setBest((b) => ({ ...b, [id]: Math.max(b[id] ?? 0, value) }));
+  const onBest = useCallback((value: number, key?: string) => {
+    const game = GAMES.find((g) => g.id === lastId.current);
+    const slot = key ?? game?.bests[0]?.key;
+    if (slot) setBest((b) => ({ ...b, [slot]: Math.max(b[slot] ?? 0, value) }));
+  }, []);
+
+  // Reveal veiled games one after another while the hub is shown.
+  useEffect(() => {
+    if (mode.kind !== "hub" || revealing || veiled.length === 0) return;
+    const id = veiled[0];
+    if (prefersReducedMotion()) {
+      markRevealed(id);
+      setVeiled((v) => v.filter((x) => x !== id));
+      return;
+    }
+    const t = window.setTimeout(() => {
+      setRevealing(id);
+      if (settings.sounds !== false) playFanfare();
+    }, REVEAL_DELAY_MS);
+    return () => window.clearTimeout(t);
+  }, [mode.kind, revealing, veiled, settings.sounds]);
+
+  const finishReveal = useCallback((id: string) => {
+    markRevealed(id);
+    const card = cardRefs.current[id];
+    if (card && !prefersReducedMotion()) {
+      card.animate(
+        [{ transform: "scale(1)" }, { transform: "scale(1.035) translateY(-4px)", offset: 0.35 }, { transform: "scale(1)" }],
+        { duration: 620, easing: "cubic-bezier(0.22, 1, 0.36, 1)" },
+      );
+      confetti(card);
+    }
+    setVeiled((v) => v.filter((x) => x !== id));
+    setRevealing(null);
+    refreshBadges((n) => n + 1);
   }, []);
 
   if (mode.kind === "play") {
@@ -158,7 +257,7 @@ export default function Games() {
             Games
           </button>
           <h1 className="gm-play-title">{game.title}</h1>
-          <BestLabel best={best[game.id] ?? 0} />
+          <BestLabel text={bestText(game, best, headerKey)} />
         </header>
         <div ref={stageRef} className={`gm-stage ${overlay ? "" : "gm-stage-fade"}`}>
           {loadError ? (
@@ -166,7 +265,7 @@ export default function Games() {
               <p>This game could not be loaded.</p>
               <button className="btn btn-secondary btn-sm" onClick={() => open(game)}>Try again</button>
             </div>
-          ) : Game ? <Game onBest={onBest} /> : null}
+          ) : Game ? <Game onBest={onBest} onBestKey={setHeaderKey} /> : null}
         </div>
         {overlay && mode.from && stageRef.current && (
           <EnterOverlay
@@ -182,7 +281,7 @@ export default function Games() {
   }
 
   return (
-    <section ref={rootRef} className="page gm-root">
+    <section ref={rootRef} className="page gm-root" data-revealing={revealing ?? undefined}>
       <div className="page-head gm-head">
         <div>
           <h1 className="page-title">Games</h1>
@@ -192,24 +291,32 @@ export default function Games() {
       <div className="gm-grid">
         {GAMES.map((game, i) => {
           const Icon = CONTROL_ICON[game.id] ?? Keyboard;
+          const hidden = veiled.includes(game.id);
+          const showNew = !hidden && isNewGame(game.id);
           return (
             <button
               key={game.id}
               ref={(el) => { cardRefs.current[game.id] = el; }}
-              className="gm-card"
+              className={`gm-card ${hidden ? "gm-card-veiled" : ""}`}
               style={{ animationDelay: `${i * 50}ms` }}
+              disabled={hidden}
               onClick={() => open(game)}
               onPointerEnter={() => { void game.load().catch(() => {}); }}
               onFocus={() => { void game.load().catch(() => {}); }}
             >
               <div className="gm-cover-wrap" ref={(el) => { coverRefs.current[game.id] = el; }}>
-                <Cover id={game.id} />
+                {hidden ? (
+                  <RevealCover id={game.id} go={revealing === game.id} onDone={() => finishReveal(game.id)} />
+                ) : (
+                  <Cover id={game.id} />
+                )}
+                {showNew && <span className="gm-new">New</span>}
               </div>
               <div className="gm-card-body">
-                <span className="gm-card-title">{game.title}</span>
-                <span className="gm-card-line">{game.tagline}</span>
+                <span className="gm-card-title">{hidden ? "New game" : game.title}</span>
+                <span className="gm-card-line">{hidden ? "Something new just arrived." : game.tagline}</span>
                 <span className="gm-card-meta">
-                  <BestLabel best={best[game.id] ?? 0} />
+                  <BestLabel text={bestText(game, best)} />
                   <span className="gm-controls">
                     <Icon size={14} strokeWidth={2} aria-hidden="true" />
                     {game.controls}

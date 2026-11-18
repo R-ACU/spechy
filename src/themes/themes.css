@@ -161,6 +161,49 @@
 :root[data-skin="halftone"] .app,
 :root[data-skin="ascii"] .app { position: relative; z-index: 1; }
 
+/* History on Home over the field: a glass card instead of the solid grey block, so the field
+   shimmers through (owner's pick, variant B). Plain themes keep the solid card. */
+:root[data-skin="halftone"] .hist-card,
+:root[data-skin="ascii"] .hist-card {
+  background: color-mix(in srgb, var(--surface) 40%, transparent);
+  border: 1px solid color-mix(in srgb, var(--text) 10%, transparent);
+  backdrop-filter: blur(1.5px);
+  padding: 6px;
+  display: flex; flex-direction: column; gap: 4px;
+}
+:root[data-skin="halftone"] .hist-row,
+:root[data-skin="ascii"] .hist-row { border-bottom: 0; border-radius: calc(var(--radius-lg) - 5px); padding: 14px 16px; }
+:root[data-skin="halftone"] .hist-row + .hist-row::before,
+:root[data-skin="ascii"] .hist-row + .hist-row::before {
+  content: ""; position: absolute; left: 16px; right: 16px; top: -2px; height: 1px;
+  background: color-mix(in srgb, var(--text) 8%, transparent); transition: opacity 140ms var(--ease);
+}
+:root[data-skin="halftone"] .hist-row:hover,
+:root[data-skin="ascii"] .hist-row:hover { background: color-mix(in srgb, var(--text) 7%, transparent); }
+:root[data-skin="halftone"] .hist-row:hover::before,
+:root[data-skin="ascii"] .hist-row:hover::before,
+:root[data-skin="halftone"] .hist-row:hover + .hist-row::before,
+:root[data-skin="ascii"] .hist-row:hover + .hist-row::before { opacity: 0; }
+:root[data-skin="halftone"] .hist-time,
+:root[data-skin="ascii"] .hist-time { color: var(--text-3); font-variant-numeric: tabular-nums; }
+
+/* Settings over the field: a glass panel that matches the history card, cards inside stay readable. */
+:root[data-skin="halftone"] .set-panel,
+:root[data-skin="ascii"] .set-panel {
+  background: color-mix(in srgb, var(--surface) 62%, transparent);
+  border: 1px solid color-mix(in srgb, var(--text) 10%, transparent);
+  backdrop-filter: blur(22px); -webkit-backdrop-filter: blur(22px);
+}
+:root[data-skin="halftone"] .set-nav,
+:root[data-skin="ascii"] .set-nav { background: color-mix(in srgb, var(--bg) 45%, transparent); }
+:root[data-skin="halftone"] .set-panel .card,
+:root[data-skin="ascii"] .set-panel .card {
+  background: color-mix(in srgb, var(--surface-2) 55%, transparent);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--text) 7%, transparent);
+}
+:root[data-skin="halftone"] .set-nav-item.active,
+:root[data-skin="ascii"] .set-nav-item.active { background: color-mix(in srgb, var(--surface-3) 75%, transparent); }
+
 /* ------------------------------------------------------------------ field canvas (ThemeLayer), placed over .content */
 .theme-backdrop {
   position: fixed;
