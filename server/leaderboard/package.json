@@ -1,0 +1,21 @@
+{
+  "name": "spechy-leaderboard",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Opt-in leaderboard backend for Spechy (Cloudflare Worker, D1, R2)",
+  "license": "MIT",
+  "type": "module",
+  "scripts": {
+    "dev": "wrangler dev --local",
+    "db:migrate:local": "wrangler d1 migrations apply spechy-leaderboard --local",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run"
+  },
+  "devDependencies": {
+    "@cloudflare/vitest-plugin": "^1.8.4",
+    "@cloudflare/workers-types": "^5.20261118.1",
+    "typescript": "~5.9",
+    "vitest": "^5.1.0",
+    "wrangler": "^4.164.0"
+  }
+}

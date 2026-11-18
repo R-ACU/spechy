@@ -1,10 +1,14 @@
 // Settings > Themes: one card per theme with a live preview drawn from that theme's own tokens.
 // Keyboard: arrow keys, Home and End move between cards, Enter or Space applies.
-import { useRef, useState, type KeyboardEvent } from "react";
-import { Check } from "lucide-react";
+// Premium themes (shop items) show their live field and stay locked until the item is owned;
+// a locked card leads to Games, where the shop lives. Picking one also equips the "theme" slot.
+import { useEffect, useRef, useState, type KeyboardEvent } from "react";
+import { Check, Lock } from "lucide-react";
 import { useStore } from "../../lib/store";
-import { isThemeId, THEMES } from "../../themes/registry";
+import { equipItem, loadEconomy, useEconomy } from "../../lib/economy";
+import { isThemeId, themeById, THEMES } from "../../themes/registry";
 import { useThemeSwitch } from "../../themes/ThemeSwitch";
+import ThemeCardPreview from "../../themes/premium/ThemeCardPreview";
 
 /** Still textures for the previews, computed once from the same formulas as fieldBackdrop.ts. */
 const GLYPH_PREVIEW = (() => {
@@ -62,16 +66,36 @@ function Mini({ skin }: { skin: string }) {
   );
 }
 
+/** Live field of a premium theme; the wrapper keeps data-skin so ThemeSwitch can read its accent. */
+function Live({ skin }: { skin: string }) {
+  return (
+    <div className="th-preview th-live" data-skin={skin}>
+      <ThemeCardPreview id={skin} />
+    </div>
+  );
+}
+
 export default function Themes() {
-  const { settings, update } = useStore();
+  const { settings, update, navigate } = useStore();
   const current = isThemeId(settings.theme) ? settings.theme : "system";
   const { switchTo, overlay } = useThemeSwitch((id) => void update({ theme: id }));
+  const { state: economy } = useEconomy();
+  useEffect(() => {
+    if (!economy) void loadEconomy().catch(() => { /* no economy: premium themes stay locked */ });
+  }, [economy]);
+  const owned = (itemId: string | undefined) => !itemId || !!economy?.inventory.some((i) => i.itemId === itemId);
   const [focusIdx, setFocusIdx] = useState(() => Math.max(0, THEMES.findIndex((t) => t.id === current)));
   const gridRef = useRef<HTMLDivElement>(null);
   const cards = useRef<(HTMLButtonElement | null)[]>([]);
 
   const pick = (id: string) => {
+    const itemId = themeById(id)?.itemId;
+    if (!owned(itemId)) { navigate("games"); return; }
     if (id !== current) void switchTo(id);
+    // Keep the economy's "theme" slot in step: the premium item while one is on, empty otherwise.
+    const equipped = economy?.equipped.theme ?? null;
+    const want = itemId ?? null;
+    if (economy && equipped !== want) void equipItem("theme", want).catch(() => { /* cosmetic, the theme itself is applied */ });
   };
 
   const move = (to: number) => {
@@ -104,6 +128,7 @@ export default function Themes() {
       <div className="th-grid" role="radiogroup" aria-label="Theme" ref={gridRef} onKeyDown={onKeyDown}>
         {THEMES.map((t, i) => {
           const selected = t.id === current;
+          const locked = !owned(t.itemId);
           return (
             <button
               key={t.id}
@@ -111,13 +136,16 @@ export default function Themes() {
               type="button"
               role="radio"
               aria-checked={selected}
+              aria-disabled={locked || undefined}
+              aria-label={locked ? `${t.name}, locked. Get it in Games, Shop` : undefined}
               tabIndex={i === focusIdx ? 0 : -1}
-              className="th-card"
+              className={locked ? "th-card locked" : "th-card"}
               onClick={() => { setFocusIdx(i); pick(t.id); }}
               onFocus={() => setFocusIdx(i)}
             >
               <div className="th-preview-wrap" aria-hidden="true">
-                {t.id === "system" ? (<><Mini skin="light" /><Mini skin="dark" /></>) : <Mini skin={t.id} />}
+                {t.id === "system" ? (<><Mini skin="light" /><Mini skin="dark" /></>) : t.itemId ? <Live skin={t.id} /> : <Mini skin={t.id} />}
+                {locked && <span className="th-lock"><Lock size={11} strokeWidth={2.4} />Locked</span>}
               </div>
               <div className="th-meta">
                 <div className="th-name-row">
@@ -126,6 +154,7 @@ export default function Themes() {
                   {selected && <Check size={15} strokeWidth={2.2} className="th-check" aria-hidden="true" />}
                 </div>
                 <div className="th-line">{t.line}</div>
+                {locked && <div className="th-get"><Lock size={12} strokeWidth={2.2} aria-hidden="true" />Get it in Games, Shop</div>}
               </div>
             </button>
           );

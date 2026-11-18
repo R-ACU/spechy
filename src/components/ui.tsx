@@ -10,8 +10,8 @@ export function IconButton({ label, className = "", ...rest }: React.ButtonHTMLA
   return <button className={`icon-btn ${className}`} aria-label={label} title={label} {...rest} />;
 }
 
-export function Toggle({ on, onChange, disabled }: { on: boolean; onChange: (v: boolean) => void; disabled?: boolean }) {
-  return <button type="button" role="switch" aria-checked={on} disabled={disabled} className={`toggle ${on ? "on" : ""}`} onClick={() => onChange(!on)} />;
+export function Toggle({ on, onChange, disabled, label }: { on: boolean; onChange: (v: boolean) => void; disabled?: boolean; label?: string }) {
+  return <button type="button" role="switch" aria-checked={on} aria-label={label} disabled={disabled} className={`toggle ${on ? "on" : ""}`} onClick={() => onChange(!on)} />;
 }
 
 export function Tabs<T extends string>({ value, onChange, items, tools }: { value: T; onChange: (v: T) => void; items: { id: T; label: string }[]; tools?: ReactNode }) {

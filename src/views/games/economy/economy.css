@@ -1,0 +1,118 @@
+/* Games economy: top navigation, coin and balance chip, results card, sound popover and the
+   tab panels. Colours only through tokens (coin colours: --coin* in styles.css). */
+
+/* ---------- top navigation inside Games: glass pill bar, selected tab filled ---------- */
+.gm-root:not(.gm-root-play) > .gm-head { margin-bottom: 18px; align-items: flex-start; }
+.g-tabs {
+  display: inline-flex; align-self: flex-start; gap: 4px; padding: 4px; margin: 0 0 26px;
+  border-radius: 14px; background: color-mix(in srgb, var(--surface) 80%, transparent);
+  border: 1px solid color-mix(in srgb, var(--text) 9%, transparent);
+  backdrop-filter: blur(14px); -webkit-backdrop-filter: blur(14px);
+}
+.g-tab {
+  display: inline-flex; align-items: center; gap: 8px; height: 38px; padding: 0 16px; border-radius: 10px;
+  color: var(--text-2); font-size: 15px; font-weight: 500;
+  transition: background 140ms var(--ease), color 140ms var(--ease);
+}
+.g-tab.hot:not(.on) { color: var(--text); background: color-mix(in srgb, var(--surface-3) 55%, transparent); }
+.g-tab.on { color: var(--text); background: var(--surface-3); }
+.g-tab:focus-visible { outline: 2px solid var(--ring-strong); outline-offset: 0; }
+
+/* ---------- the Spechy coin: flat gold disc, rim, S; no gradient ---------- */
+.coin {
+  --s: 16px; width: var(--s); height: var(--s); border-radius: 50%; flex: none;
+  display: inline-grid; place-items: center; background: var(--coin);
+  box-shadow:
+    inset 0 0 0 calc(var(--s) * .08) var(--coin-rim),
+    inset 0 0 0 calc(var(--s) * .15) var(--coin),
+    inset 0 0 0 calc(var(--s) * .19) var(--coin-rim-inner),
+    0 1px 0 var(--coin-drop);
+}
+.coin b { font: 800 calc(var(--s) * .56)/1 var(--font); color: var(--coin-ink); transform: translateY(.02em); }
+.coin-fly { position: fixed; left: 0; top: 0; z-index: 400; pointer-events: none; --s: 20px; will-change: transform; }
+
+.coin-chip {
+  display: inline-flex; align-items: center; gap: 8px; height: 34px; padding: 0 14px 0 6px; flex: none;
+  border-radius: 999px; background: color-mix(in srgb, var(--surface-2) 90%, transparent);
+  border: 1px solid color-mix(in srgb, var(--text) 10%, transparent);
+  color: var(--text); font-size: 15px; font-weight: 600; font-variant-numeric: tabular-nums;
+  transition: background 140ms var(--ease);
+}
+.coin-chip:hover { background: var(--surface-3); }
+.coin-chip-unl {
+  display: inline-flex; align-items: center; gap: 4px; margin-left: 2px; padding: 2px 8px; border-radius: 999px;
+  background: var(--accent-soft); color: var(--accent); font-size: 11.5px; font-weight: 700; letter-spacing: .02em;
+}
+.gm-head-sep { width: 1px; height: 18px; margin: 0 4px; background: var(--border-strong); }
+
+/* ---------- results card ---------- */
+.sr-layer { position: absolute; inset: 0; display: grid; place-items: center; z-index: 5; pointer-events: none; }
+.gm-root { position: relative; }
+.sr-float-layer { position: absolute; left: 0; right: 0; top: 250px; display: flex; justify-content: center; z-index: 20; pointer-events: none; }
+.sr-card {
+  pointer-events: auto; width: 380px; max-width: calc(100% - 32px); padding: 24px; border-radius: 20px;
+  background: color-mix(in srgb, var(--surface) 92%, transparent);
+  border: 1px solid color-mix(in srgb, var(--text) 10%, transparent);
+  box-shadow: var(--shadow-3); backdrop-filter: blur(16px); -webkit-backdrop-filter: blur(16px);
+  animation: sr-in 260ms var(--ease) both;
+}
+@keyframes sr-in { from { opacity: 0; transform: translateY(10px) scale(.98); } to { opacity: 1; transform: none; } }
+.sr-k { font-size: 12px; letter-spacing: .12em; text-transform: uppercase; color: var(--text-3); }
+.sr-score { font-size: 44px; font-weight: 700; letter-spacing: -.02em; font-variant-numeric: tabular-nums; margin: 2px 0; color: var(--text); }
+.sr-best { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; font-weight: 600; color: var(--coin-rim); }
+:root[data-theme="dark"] .sr-best { color: var(--coin); }
+.sr-muted { font-size: 12px; color: var(--text-3); }
+.sr-rows { margin: 16px 0 6px; border-top: 1px solid color-mix(in srgb, var(--text) 8%, transparent); }
+.sr-row {
+  display: flex; align-items: center; justify-content: space-between; padding: 9px 0; font-size: 14px; color: var(--text-2);
+  border-bottom: 1px solid color-mix(in srgb, var(--text) 6%, transparent);
+  opacity: 0; transform: translateX(-6px); transition: opacity 200ms var(--ease), transform 200ms var(--ease);
+}
+.sr-row.on { opacity: 1; transform: none; }
+.sr-row b { display: inline-flex; align-items: center; gap: 6px; color: var(--text); font-variant-numeric: tabular-nums; }
+.sr-row.total { color: var(--text); font-weight: 600; border-bottom: 0; }
+.sr-row.total b { font-size: 18px; }
+.sr-row.sr-promo { color: var(--text); }
+.sr-rp { color: var(--accent); }
+.sr-note { margin: 4px 0 0; font-size: 12px; color: var(--text-3); }
+.sr-actions { display: flex; gap: 8px; margin-top: 14px; }
+.sr-actions .btn { flex: 1; }
+
+/* ---------- sound button and its popover (mute plus volume) ---------- */
+.gm-sound-wrap { position: relative; }
+.btn.gm-sound.on { background: var(--surface-3); color: var(--text); }
+.gm-sound-pop {
+  position: absolute; z-index: 40; top: calc(100% + 6px); right: 0; width: 220px; padding: 12px 14px 14px;
+  background: var(--menu-bg); border: 1px solid var(--border); border-radius: var(--radius-sm); box-shadow: var(--shadow-2);
+  display: flex; flex-direction: column; gap: 10px; animation: sr-pop 140ms var(--ease) both;
+}
+@keyframes sr-pop { from { opacity: 0; transform: translateY(-4px); } to { opacity: 1; transform: none; } }
+.gm-sound-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.gm-sound-label { font-size: 13px; font-weight: 500; color: var(--text); }
+.gm-sound-val { font-size: 12.5px; color: var(--text-3); font-variant-numeric: tabular-nums; }
+.gm-sound-range { width: 100%; }
+
+/* ---------- Leaderboard, Shop and Profile panels (phase 1 stubs) ---------- */
+.gm-pane { animation: gm-fade 220ms var(--ease) both; }
+.gm-panel {
+  max-width: 560px; padding: 28px; border-radius: var(--radius-lg);
+  background: color-mix(in srgb, var(--surface-2) 92%, transparent); border: 1px solid var(--border);
+  display: flex; flex-direction: column; align-items: flex-start; gap: 10px;
+}
+.gm-lb-icon { width: 44px; height: 44px; border-radius: 12px; display: grid; place-items: center; background: var(--surface-3); color: var(--text-2); }
+.gm-lb-title { margin: 6px 0 0; font-size: 20px; font-weight: 600; letter-spacing: -.01em; color: var(--text); }
+.gm-lb-line { margin: 0; font-size: 14px; line-height: 1.5; color: var(--text-2); }
+.gm-lb-points { list-style: none; margin: 8px 0 12px; padding: 0; display: flex; flex-direction: column; gap: 10px; }
+.gm-lb-points li { display: flex; align-items: flex-start; gap: 10px; font-size: 13.5px; color: var(--text-2); line-height: 1.45; }
+.gm-lb-points svg { flex: none; margin-top: 1px; color: var(--success); }
+.gm-lb-soon { font-size: 12px; color: var(--text-3); }
+.gm-stub-stats { display: flex; flex-wrap: wrap; gap: 18px; margin-top: 8px; font-size: 13.5px; color: var(--text-2); }
+.gm-stub-stats span { display: inline-flex; align-items: center; gap: 6px; }
+.gm-stub-stats b { color: var(--text); font-variant-numeric: tabular-nums; }
+.gm-rp { width: 100%; height: 6px; border-radius: 999px; background: var(--surface-3); overflow: hidden; margin-top: 6px; }
+.gm-rp i { display: block; height: 100%; border-radius: inherit; background: var(--accent); transition: width 400ms var(--ease); }
+
+@media (prefers-reduced-motion: reduce) {
+  .sr-card, .gm-sound-pop, .gm-pane { animation: none; }
+  .sr-row, .gm-rp i, .g-tab, .coin-chip { transition: none; }
+}

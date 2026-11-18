@@ -372,6 +372,8 @@ pub struct Settings {
     /// When true, dictations go to the scratchpad instead of the focused app.
     pub scratchpad_pinned: bool,
     pub onboarded: bool,
+    /// Leaderboard server (https, or http on this machine). Empty = the debug default in debug builds, none in release.
+    pub leaderboard_url: String,
 }
 impl Default for Settings {
     fn default() -> Self {
@@ -396,6 +398,7 @@ impl Default for Settings {
             style: StyleSettings::default(),
             scratchpad_pinned: false,
             onboarded: false,
+            leaderboard_url: String::new(),
         }
     }
 }

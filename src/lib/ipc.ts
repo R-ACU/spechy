@@ -141,6 +141,8 @@ export interface Settings {
   style: StyleSettings;
   scratchpadPinned: boolean;
   onboarded: boolean;
+  /** Leaderboard server: https, or http on this machine. Empty = debug default in dev builds, none in release. */
+  leaderboardUrl: string;
 }
 
 export interface HistoryEntry {
@@ -165,6 +167,84 @@ export interface Stats {
   perDay: DayStat[]; perApp: AppStat[]; topWords: WordStat[]; appsUsed: number;
 }
 export interface MicDevice { name: string; isDefault: boolean }
+
+// ---------- Games economy (mirrors src-tauri/src/economy.rs) ----------
+export type GameId = "tower" | "snake" | "comet";
+export type EquipSlot = "title" | "theme" | "pill" | "tower-skin" | "snake-skin" | "comet-skin";
+export type ItemKindId = EquipSlot | "profile";
+export type BoxId = "basic" | "premium" | "mythic";
+export type TitleRarity = "common" | "rare" | "epic" | "legendary";
+export interface RankState {
+  /** 0 Bronze, 1 Silver, 2 Gold, 3 Platinum, 4 Diamond, 5 Master, 6 Champion. */
+  tier: number; tierId: string; tierName: string;
+  /** 0..2 for I..III; null at Champion. */
+  division: number | null;
+  /** RP inside the current division (0..99); keeps growing at Champion. */
+  rp: number; totalRp: number;
+}
+export interface BoxState { id: BoxId; price: number; keys: number; opened: number; sinceLegendary: number; pity: number | null }
+export interface OwnedItem { itemId: string; kind: ItemKindId | string; acquiredAt: number; source: "shop" | "box" | "rank" | "dev" | string }
+export interface DailyEconomy { day: string; gameCoins: number; gameCoinCap: number; bestBonuses: number; bestBonusCap: number }
+/** Effective (boosted) earning values from the backend (`EARN_BOOST_PERCENT` in economy.rs); the UI never hard-codes them. */
+export interface EarnRates {
+  boostPercent: number;
+  /** First dictation of a day at streak 1. */
+  dayCoins: number;
+  /** Streak ceiling of the day bonus. */
+  dayCoinsMax: number;
+  /** What the next dictation day pays. */
+  nextDayCoins: number;
+  /** Per full 1,000 words. */
+  wordsCoins: number;
+  /** Largest round payout before the daily cap. */
+  roundCoinMax: number;
+  bestBonus: number;
+  divisionCoins: number;
+  /** Tier promotion coins by tier index, 0 Bronze .. 6 Champion. */
+  tierCoins: number[];
+  /** Monday payout for rank 1, 2, 3. */
+  weeklyPayout: number[];
+}
+export interface EconomyState {
+  balance: number;
+  /** Developer "unlimited coins" (debug builds only): purchases keep the balance. */
+  unlimited: boolean;
+  /** True in debug builds, where the developer commands work. */
+  devTools: boolean;
+  rank: RankState;
+  boxes: BoxState[];
+  inventory: OwnedItem[];
+  equipped: Partial<Record<EquipSlot, string>>;
+  today: DailyEconomy;
+  streak: number;
+  wordsTowardNext: number;
+  /** Coins earned this ISO week, Monday 00:00 UTC until now (not refunds), the leaderboard's week. */
+  weekEarned: number;
+  earnRates: EarnRates;
+}
+export interface Promotion {
+  kind: "division" | "tier";
+  tier: number; tierName: string; division: number | null;
+  /** Already added to the balance. */
+  coins: number; boxKey: BoxId | null; title: string | null;
+}
+export interface GameAward {
+  game: GameId; score: number; newBest: boolean; quit: boolean;
+  /** min(10, f(score)) before the daily cap. */
+  baseCoins: number;
+  coins: number; bestBonus: number; total: number; rp: number;
+  dailyCapHit: boolean; bestCapHit: boolean;
+  rankBefore: RankState;
+  promotions: Promotion[];
+  state: EconomyState;
+}
+export interface BoxOpening {
+  boxId: BoxId; rarity: TitleRarity; title: string; isNew: boolean;
+  refund: number; usedKey: boolean; pityHit: boolean; state: EconomyState;
+}
+export interface RankUpResult { promotions: Promotion[]; state: EconomyState }
+/** Monday payout for a top three finish last week; already in `state.balance`. */
+export interface WeeklyPayout { week: string; rank: number; coins: number; state: EconomyState }
 
 // ---------- Commands ----------
 export const api = {
@@ -251,7 +331,25 @@ export const api = {
   minimizeWindow: () => invoke<void>("window_minimize"),
   toggleMaximizeWindow: () => invoke<void>("window_toggle_maximize"),
   closeWindow: () => invoke<void>("window_close"), // destroys the webview, app stays in tray
+  // games economy (use src/lib/economy.ts in views: it keeps the shared state and the browser mock)
+  economyState: () => invoke<EconomyState>("economy_state"),
+  economyAwardGame: (game: GameId, score: number, newBest: boolean, quit: boolean) =>
+    invoke<GameAward>("economy_award_game", { game, score, newBest, quit }),
+  economyBuy: (itemId: string) => invoke<EconomyState>("economy_buy", { itemId }),
+  economyOpenBox: (boxId: BoxId) => invoke<BoxOpening>("economy_open_box", { boxId }),
+  economyEquip: (slot: EquipSlot, itemId: string | null) => invoke<EconomyState>("economy_equip", { slot, itemId }),
 };
+
+/** Developer economy commands. Debug builds only: null in a release bundle (and the backend refuses them there). */
+export const economyDevApi = import.meta.env.DEV
+  ? {
+      setUnlimited: (on: boolean) => invoke<EconomyState>("economy_dev_set_unlimited", { on }),
+      addCoins: (amount: number) => invoke<EconomyState>("economy_dev_add_coins", { amount }),
+      rankUp: () => invoke<RankUpResult>("economy_dev_rank_up"),
+      grantKeys: (boxId: BoxId, count: number) => invoke<EconomyState>("economy_dev_grant_keys", { boxId, count }),
+      reset: () => invoke<EconomyState>("economy_dev_reset"),
+    }
+  : null;
 
 // ---------- Events ----------
 /** Dictation whose target is Spechy's own window. Payload: InsertText. Mirrors EV_INSERT_TEXT in model.rs. */
@@ -268,4 +366,84 @@ export const events = {
   onScratchpad: (cb: (text: string) => void): Promise<UnlistenFn> => listen<string>("spechy://scratchpad", (e) => cb(e.payload)),
   onFailedChanged: (cb: (list: FailedDictation[]) => void): Promise<UnlistenFn> => listen<FailedDictation[]>("spechy://failed-changed", (e) => cb(e.payload)),
   onInsertText: (cb: (p: InsertText) => void): Promise<UnlistenFn> => listen<InsertText>(EV_INSERT_TEXT, (e) => cb(e.payload)),
+  /** Economy changed without the page asking (dictation rewards). Mirrors EV_ECONOMY_CHANGED in economy.rs. */
+  onEconomyChanged: (cb: (s: EconomyState) => void): Promise<UnlistenFn> => listen<EconomyState>("spechy://economy-changed", (e) => cb(e.payload)),
 };
+
+// ---------- Leaderboard (opt-in; use src/lib/leaderboard.ts in views, it adds the browser mock) ----------
+export type LeaderboardCategory = "overall" | "words" | "tower" | "snake" | "comet";
+export type ReportKind = "name" | "avatar" | "player";
+export interface LeaderboardStatus {
+  joined: boolean;
+  /** False in a release build until the owner deploys a server (and while the URL setting is invalid). */
+  serverConfigured: boolean;
+  displayName?: string;
+  playerId?: string;
+  /** Moderation hid the player or the picture. */
+  hidden?: boolean;
+  avatarHidden?: boolean;
+}
+/** One row as the backend returns it. `title` is the server's title id ("night-owl"). */
+export interface LeaderboardRowRaw {
+  /** null only for your own row while you have no value yet. */
+  rank: number | null;
+  playerId: string;
+  name: string;
+  title: string | null;
+  /** 0 Bronze .. 6 Champion. */
+  tier: number;
+  /** 0..2 for I..III (0 at Champion). */
+  division: number;
+  rp: number;
+  score: number;
+  hasAvatar: boolean;
+  avatarVersion: string | null;
+  me: boolean;
+}
+export interface LeaderboardBoardRaw {
+  cat: LeaderboardCategory;
+  /** ISO week key, "2026-W47". */
+  week: string;
+  startsAt: string;
+  endsAt: string;
+  current: boolean;
+  total: number;
+  rows: LeaderboardRowRaw[];
+  me: LeaderboardRowRaw | null;
+}
+/** What every leaderboard call rejects with. */
+export interface LeaderboardError {
+  /** Server code (validation_failed, rate_limited, ...) or local: network, not_configured, not_joined, already_joined, locked, invalid. */
+  code: string;
+  message: string;
+  /** length | characters | profanity | reserved for a rejected name. */
+  reason: string | null;
+  retryAfter: number | null;
+  status: number;
+}
+/** Fields of `update_me`; titleId null unequips. */
+export interface LeaderboardMeFields { name?: string; titleId?: string | null; tier?: number; division?: number; rp?: number }
+
+export const leaderboardApi = {
+  status: () => invoke<LeaderboardStatus>("leaderboard_status"),
+  join: (displayName: string) => invoke<LeaderboardStatus>("leaderboard_join", { displayName }),
+  /** serverDeleted false = server unreachable, the deletion is retried automatically. */
+  leave: () => invoke<{ serverDeleted: boolean }>("leaderboard_leave"),
+  board: (cat: LeaderboardCategory) => invoke<LeaderboardBoardRaw>("leaderboard_board", { cat }),
+  /** Raw picture bytes (ArrayBuffer). */
+  avatar: (playerId: string) => invoke<ArrayBuffer>("leaderboard_avatar", { playerId }),
+  updateMe: (fields: LeaderboardMeFields) => invoke<void>("leaderboard_update_me", { fields }),
+  report: (playerId: string, reason: ReportKind, note?: string) => invoke<void>("leaderboard_report", { playerId, reason, note: note ?? null }),
+  /** Sends the pending batch now; true when something is still pending. Normally the backend does this itself. */
+  sync: () => invoke<boolean>("leaderboard_sync"),
+  avatarSave: (bytes: Uint8Array, mime: string) => invoke<void>("leaderboard_avatar_save", bytes, { headers: { "x-mime": mime } }),
+  /** The local picture; an empty buffer when none. */
+  myAvatar: () => invoke<ArrayBuffer>("leaderboard_my_avatar"),
+  /** Deletes the local picture and, when joined, the server copy. The unlock stays owned. */
+  avatarRemove: () => invoke<void>("leaderboard_avatar_remove"),
+  /** Monday payout check; null when not joined (no request), already paid or no top three finish. */
+  claimPayout: () => invoke<WeeklyPayout | null>("leaderboard_claim_payout"),
+};
+/** Joined, left, moderated, or a sync finished. Payload: LeaderboardStatus. Mirrors EV_LEADERBOARD_CHANGED in leaderboard.rs. */
+export const onLeaderboardChanged = (cb: (s: LeaderboardStatus) => void): Promise<UnlistenFn> =>
+  listen<LeaderboardStatus>("spechy://leaderboard-changed", (e) => cb(e.payload));

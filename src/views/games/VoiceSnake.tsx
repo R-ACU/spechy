@@ -10,7 +10,9 @@ import { ArrowDown, ArrowLeft, ArrowRight, ArrowUp, Ear, Keyboard, Mic, Play, X,
 import { invoke, isTauri } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { useStore } from "../../lib/store";
+import { economySnapshot } from "../../lib/economy";
 import { migrateSnakeBest, readBest, SNAKE_KEYS_BEST_KEY, SNAKE_VOICE_BEST_KEY, writeBest, type GameProps } from "./catalog";
+import { NEON_SNAKE, skinFor, withEquippedSkin, type SnakeSkin } from "./shop/gameSkins";
 import "./voice.css";
 
 type Dir = "up" | "down" | "left" | "right";
@@ -126,7 +128,7 @@ function LangPicker({ value, onChange, disabled }: { value: Lang; onChange: (l: 
   );
 }
 
-export default function VoiceSnake({ onBest, onBestKey }: GameProps) {
+export default function VoiceSnake({ onBest, onBestKey, onRoundEnd }: GameProps) {
   const { settings } = useStore();
   const [phase, setPhase] = useState<Phase>("ready");
   const [count, setCount] = useState(3);
@@ -144,6 +146,11 @@ export default function VoiceSnake({ onBest, onBestKey }: GameProps) {
   const voiceRef = useRef<Voice>({ state: "off" });
   const onMsg = useRef<(m: SnakeMsg) => void>(() => {});
 
+  // The skin is read when a round begins, so a change on the hub applies on the next round.
+  const [skin, setSkin] = useState<SnakeSkin>(null);
+  const skinRef = useRef<SnakeSkin>(null);
+  useEffect(() => withEquippedSkin("snake-skin", (e) => skinFor("snake-skin", e), (k) => { skinRef.current = k; setSkin(k); }), []);
+
   const board = useRef<Board>(fresh());
   const phaseRef = useRef<Phase>("ready");
   const session = useRef("");
@@ -158,6 +165,10 @@ export default function VoiceSnake({ onBest, onBestKey }: GameProps) {
   bestRef.current = onBest;
   const bestKeyRef = useRef(onBestKey);
   bestKeyRef.current = onBestKey;
+  const roundEndRef = useRef(onRoundEnd);
+  roundEndRef.current = onRoundEnd;
+  /** Record of the current mode when the round started, to tell a new best at game over. */
+  const roundStartBest = useRef(0);
   const modeRef = useRef<Mode | null>(null);
   const langRef = useRef(lang);
   langRef.current = lang;
@@ -194,7 +205,12 @@ export default function VoiceSnake({ onBest, onBestKey }: GameProps) {
     if (!g) return;
     const cell = px / N;
     const b = board.current;
-    const col = {
+    const neon = skinRef.current === "neon";
+    const col = neon ? {
+      grid: NEON_SNAKE.grid, body: NEON_SNAKE.body, edge: NEON_SNAKE.edge, shine: NEON_SNAKE.shine,
+      head: NEON_SNAKE.head, apple: NEON_SNAKE.apple, leaf: NEON_SNAKE.leaf, eye: NEON_SNAKE.eye,
+      pupil: NEON_SNAKE.pupil, tongue: NEON_SNAKE.apple, dead: token("--danger"),
+    } : {
       grid: token("--border-strong"), body: token("--teal-700"), edge: token("--teal-400"), shine: token("--teal-900"),
       head: token("--success"), apple: token("--warn"), leaf: token("--success"), eye: token("--on-solid"),
       pupil: token("--bg"), tongue: token("--danger"), dead: token("--danger"),
@@ -240,6 +256,9 @@ export default function VoiceSnake({ onBest, onBestKey }: GameProps) {
     const passes: [string, number, number][] = [[col.edge, 2.4 * dpr, 1], [col.body, 0, 1], [col.shine, 0, 0.2]];
     for (const [colour, extra, scale] of passes) {
       g.strokeStyle = colour;
+      // neon glow on the body pass only (the board is tiny, so this stays cheap)
+      g.shadowColor = NEON_SNAKE.glow;
+      g.shadowBlur = neon && colour === col.body && !b.dead ? cell * 0.45 : 0;
       for (let i = n - 1; i > 0; i--) {
         g.lineWidth = width(i - 1) * scale + extra;
         g.beginPath();
@@ -248,6 +267,8 @@ export default function VoiceSnake({ onBest, onBestKey }: GameProps) {
         g.stroke();
       }
     }
+
+    g.shadowBlur = 0;
 
     // head with eyes looking where it goes; the tongue flicks now and then; crossed eyes when dead
     const [hx, hy] = pts[0];
@@ -321,6 +342,7 @@ export default function VoiceSnake({ onBest, onBestKey }: GameProps) {
       b.dead = true;
       b.cause = wall ? "wall" : "tail";
       setPhaseBoth("over");
+      roundEndRef.current?.({ score: b.points, newBest: b.points > roundStartBest.current, quit: false });
       return;
     }
     b.prev = b.body;
@@ -342,6 +364,9 @@ export default function VoiceSnake({ onBest, onBestKey }: GameProps) {
   const begin = useCallback(() => {
     stopTick();
     board.current = fresh();
+    const eq = economySnapshot().state;
+    if (eq) { const k = skinFor("snake-skin", eq.equipped["snake-skin"]); skinRef.current = k; setSkin(k); }
+    roundStartBest.current = readBest(BEST_KEY[modeRef.current ?? "keys"]);
     setPoints(0);
     setCount(3);
     setPhaseBoth("count");
@@ -491,6 +516,12 @@ export default function VoiceSnake({ onBest, onBestKey }: GameProps) {
     return () => { dead = true; off?.(); };
   }, []);
 
+  // Leaving mid round still pays what the round earned so far.
+  useEffect(() => () => {
+    const p = phaseRef.current, points = board.current.points;
+    if ((p === "play" || p === "paused") && points > 0) roundEndRef.current?.({ score: points, newBest: false, quit: true });
+  }, []);
+
   // Leaving the game: stop the listener (and a running download) and every timer.
   useEffect(() => () => {
     stopVoice();
@@ -570,7 +601,7 @@ export default function VoiceSnake({ onBest, onBestKey }: GameProps) {
         </div>
         <div className="vs-board-wrap" ref={wrap}>
           <div className="vs-board-box" style={{ width: size, height: size }}>
-          <canvas ref={canvas} className="vs-board" style={{ width: size, height: size }} aria-label="Snake board" />
+          <canvas ref={canvas} className={`vs-board${skin === "neon" ? " skin-neon" : ""}`} style={{ width: size, height: size }} aria-label="Snake board" />
           {phase === "count" && (
             <div className="vs-over clear"><span key={count} className="vs-count">{count}</span></div>
           )}

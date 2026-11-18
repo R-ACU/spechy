@@ -1,5 +1,5 @@
 /* Comet Keeper: the panel fills the stage, the canvas is the game art (its own palette).
-   The volume control reuses .gm-vol from games.css. No colours here besides tokens. */
+   No colours here besides tokens. */
 .ck { position: absolute; inset: 0; outline: none; overflow: hidden; background: var(--surface-3); }
 .ck canvas {
   display: block; image-rendering: pixelated; touch-action: none; user-select: none; cursor: crosshair;

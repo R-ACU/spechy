@@ -1,0 +1,57 @@
+# Spechy leaderboard Worker.
+#
+# LOCAL ONLY so far. The ids below are placeholders: `wrangler dev` and the tests
+# emulate D1 and R2 locally (Miniflare) and never touch Cloudflare.
+#
+# To go live later (see README.md, "Deploy later"):
+#   1. npx wrangler d1 create spechy-leaderboard      -> paste the printed database_id below
+#   2. npx wrangler r2 bucket create spechy-avatars
+#   3. npx wrangler d1 migrations apply spechy-leaderboard --remote
+#   4. npx wrangler secret put ADMIN_TOKEN            (long random string, keep it in a password manager)
+#   5. npx wrangler secret put IP_HASH_SALT           (another random string, salts the hashed IPs used for rate limits)
+#   6. uncomment [[routes]] with the chosen custom domain, then: npx wrangler deploy
+# Always run wrangler from THIS folder (it reads .env from the current directory).
+
+name = "spechy-leaderboard"
+main = "src/index.ts"
+compatibility_date = "2026-11-01"
+compatibility_flags = ["nodejs_compat"]
+workers_dev = false
+
+[vars]
+# Comma separated list of browser origins allowed to call the API (CORS).
+# Native requests from Rust (no Origin header) are always allowed.
+# Windows WebView2 serves Tauri 2 apps from http://tauri.localhost, Linux/macOS from tauri://localhost,
+# the Vite dev server of the app runs on 127.0.0.1:1433.
+ALLOWED_ORIGINS = "http://tauri.localhost,https://tauri.localhost,tauri://localhost,http://127.0.0.1:1433,http://localhost:1433"
+# Distinct open reports that hide a picture automatically until an admin reviews it. "0" disables.
+AUTO_HIDE_AVATAR_REPORTS = "3"
+# Players without any request for this many days are deleted by the daily cron (lost tokens). "0" disables.
+INACTIVE_DELETE_DAYS = "180"
+
+[[d1_databases]]
+binding = "DB"
+database_name = "spechy-leaderboard"
+database_id = "00000000-0000-0000-0000-000000000000" # placeholder, replace after `wrangler d1 create`
+migrations_dir = "migrations"
+
+[[r2_buckets]]
+binding = "AVATARS"
+bucket_name = "spechy-avatars" # create with `wrangler r2 bucket create spechy-avatars`
+
+[triggers]
+# Daily housekeeping at 00:17 UTC: prunes rate-limit counters, old daily usage,
+# idempotency keys, week history older than a year and inactive players.
+# The weekly reset itself needs no job: every score row is keyed by ISO week,
+# so a new week starts empty on Monday 00:00 UTC (lazy rollover).
+crons = ["17 0 * * *"]
+
+# Custom domain, suggestion (uncomment when deploying):
+# [[routes]]
+# pattern = "leaderboard.remos.systems"
+# custom_domain = true
+
+# Secrets (never in this file):
+#   ADMIN_TOKEN   guards /v1/admin/*. Without it all admin endpoints answer 503.
+#   IP_HASH_SALT  optional salt for hashed IP rate-limit keys.
+# For `wrangler dev`, put them into a local .dev.vars file in this folder (gitignored), see .dev.vars.example.

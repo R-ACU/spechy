@@ -45,6 +45,8 @@ export interface CometKeeperOptions {
   volume?: number;
   /** Let a bot guard the keeper (for tests). */
   bot?: boolean;
+  /** Spechy shop skin: "ice" gives icy blue comets and planet. Default: the original colours. */
+  skin?: CometSkin;
   onGameOver?: (result: { score: number; best: number; newBest: boolean }) => void;
 }
 
@@ -127,16 +129,29 @@ const GOLD = pack("#ffd84a");
 const RED = pack("#ff4f64");
 const CORE = { body: pack("#ffd27a"), shade: pack("#f0a050"), light: pack("#fff3c4"), line: pack("#3a2148"), eye: pack("#3a2148"), cheek: pack("#ff9a8a") };
 const SHIELD = { main: pack("#6fdcff"), edge: pack("#d4f8ff"), inner: pack("#2f8fc4"), bash: pack("#ffffff") };
-const PLANET = { body: pack("#3b3878"), band: pack("#4a4690"), shade: pack("#2b2960"), ring: pack("#7a6cc0"), ringDark: pack("#4f4590") };
+const BASE_PLANET = { body: pack("#3b3878"), band: pack("#4a4690"), shade: pack("#2b2960"), ring: pack("#7a6cc0"), ringDark: pack("#4f4590") };
 const HEART_FULL = pack("#ff6b8a"), HEART_LIGHT = pack("#ffc2d0"), HEART_EMPTY = pack("#3a3766");
 
 interface Style { head: number; core: number; trail: [number, number, number]; len: number; wide: number }
-const STYLES: Record<Kind, Style> = {
+const BASE_STYLES: Record<Kind, Style> = {
   normal: { head: pack("#ff9a5a"), core: pack("#fff0d0"), trail: [pack("#ff6b5a"), pack("#c8456e"), pack("#7a3470")], len: 11, wide: 4 },
   fast: { head: pack("#9fe6ff"), core: pack("#ffffff"), trail: [pack("#6fc8ff"), pack("#4a7fe0"), pack("#3a4aa0")], len: 20, wide: 7 },
   gold: { head: pack("#ffe14a"), core: pack("#fffbe0"), trail: [pack("#ffb43a"), pack("#d9802a"), pack("#8a4a2a")], len: 13, wide: 5 },
   heart: { head: HEART_FULL, core: HEART_LIGHT, trail: [pack("#e0507a"), pack("#a8406e"), pack("#6a3062")], len: 6, wide: 0 },
 };
+
+// Spechy shop skin "Ice Comets" (not part of the standalone look): icy blue trails and planet.
+// The heart comet keeps its pink so it still reads as a pickup.
+const ICE_STYLES: Record<Kind, Style> = {
+  normal: { head: pack("#bdeaff"), core: pack("#ffffff"), trail: [pack("#7fd0ff"), pack("#4a9be0"), pack("#2c5fb0")], len: 11, wide: 4 },
+  fast: { head: pack("#e4fbff"), core: pack("#ffffff"), trail: [pack("#8ff2ff"), pack("#4ab8f0"), pack("#3a6ad8")], len: 20, wide: 7 },
+  gold: { head: pack("#d8f4ff"), core: pack("#ffffff"), trail: [pack("#a8e8ff"), pack("#69b6ee"), pack("#4a7fc8")], len: 13, wide: 5 },
+  heart: BASE_STYLES.heart,
+};
+const ICE_PLANET = { body: pack("#3a7fa8"), band: pack("#5fb0d0"), shade: pack("#245a86"), ring: pack("#b8ecff"), ringDark: pack("#5f9cc8") };
+export type CometSkin = "ice" | null;
+/** Trail styles and planet colours of a skin, for the shop preview. */
+export const cometSkinLook = (skin: CometSkin) => (skin === "ice" ? { styles: ICE_STYLES, planet: ICE_PLANET } : { styles: BASE_STYLES, planet: BASE_PLANET });
 
 const HEART = [".XX.XX.", "XXXXXXX", "XXXXXXX", ".XXXXX.", "..XXX..", "...X..."];
 
@@ -367,6 +382,7 @@ export function create(canvas: HTMLCanvasElement, opts: CometKeeperOptions = {})
   const storageKey = opts.storageKey || COMET_BEST_KEY;
   const shortSide = opts.shortSide || SHORT_SIDE;
   const keyTarget: EventTarget = opts.keyTarget || window;
+  const { styles: STYLES, planet: PLANET } = cometSkinLook(opts.skin ?? null);
 
   const load = (k: string) => { try { return parseInt(localStorage.getItem(k) ?? "", 10) || 0; } catch { return 0; } };
   const save = (k: string, v: number) => { try { localStorage.setItem(k, String(v)); } catch { /* storage blocked */ } };

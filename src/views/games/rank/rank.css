@@ -1,0 +1,100 @@
+/* Ranks: emblems, the rank card, the rewards ladder and the rank-up overlay.
+   UI colours through tokens; the tier colours (--c, --rc) are rank art from rankArt.ts. */
+
+.rank-badge { --rb: 64px; width: var(--rb); height: var(--rb); display: inline-block; flex: none; line-height: 0; }
+.rank-badge > svg { width: 100%; height: 100%; display: block; overflow: visible; }
+.rank-pip-off { fill: var(--border-strong); }
+
+/* Title tags coloured by rarity (shared --rarity-* tokens, styles.css). */
+.rk-title {
+  --tc: var(--rarity-common); display: inline-flex; align-items: center; flex: none; height: 20px; padding: 0 7px; border-radius: 6px;
+  font-size: 11px; font-weight: 600; line-height: 1; white-space: nowrap;
+  color: var(--tc); border: 1px solid color-mix(in srgb, var(--tc) 50%, transparent);
+  background: color-mix(in srgb, var(--tc) 8%, transparent);
+}
+.rk-title.r-rare { --tc: var(--rarity-rare); }
+.rk-title.r-epic { --tc: var(--rarity-epic); }
+.rk-title.r-legendary { --tc: var(--rarity-legendary); }
+.rk-title.r-rank { --tc: var(--rarity-rank); }
+
+/* ---------- rank card (me) and Monday payout ---------- */
+.rk-top { display: grid; grid-template-columns: minmax(0, 1.3fr) minmax(0, 1fr); gap: 16px; margin-bottom: 16px; max-width: 1100px; }
+.rk-glass {
+  border-radius: var(--radius-lg); border: 1px solid color-mix(in srgb, var(--text) 9%, transparent);
+  background: color-mix(in srgb, var(--surface) 82%, transparent);
+  backdrop-filter: blur(14px); -webkit-backdrop-filter: blur(14px);
+}
+.rk-me { padding: 22px 24px; display: flex; align-items: center; gap: 20px; min-width: 0; }
+.rk-me .rank-badge { margin: 0 2px 6px 0; }
+.rk-me-mid { min-width: 0; flex: 1; }
+.rk-me-rank { font-size: 13px; color: var(--text-2); overflow-wrap: anywhere; }
+.rk-me-rank b { color: var(--text); font-weight: 600; }
+.rk-me-name { font-size: 19px; font-weight: 600; margin: 2px 0 4px; display: flex; align-items: center; gap: 8px; min-width: 0; color: var(--text); }
+.rk-me-name > span:first-child { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.rk-rp { display: flex; align-items: center; gap: 10px; margin-top: 8px; font-size: 12px; color: var(--text-3); font-variant-numeric: tabular-nums; white-space: nowrap; }
+.rk-rp-bar { width: 170px; max-width: 40%; height: 6px; border-radius: 99px; background: var(--surface-3); overflow: hidden; }
+.rk-rp-bar i { display: block; height: 100%; border-radius: inherit; background: var(--rc, var(--accent)); transition: width 600ms var(--ease); }
+.rk-nums { margin-left: auto; display: flex; gap: 26px; text-align: right; flex: none; }
+.rk-num { font-size: 24px; font-weight: 600; font-variant-numeric: tabular-nums; letter-spacing: -.01em; color: var(--text); line-height: 1.2; }
+.rk-cap { font-size: 12px; color: var(--text-3); white-space: nowrap; }
+
+.rk-pay { padding: 20px 22px; }
+.rk-pay-h { display: flex; align-items: center; gap: 8px; font-weight: 600; margin-bottom: 10px; color: var(--text); }
+.rk-pay-row { display: flex; justify-content: space-between; padding: 5px 0; color: var(--text-2); font-variant-numeric: tabular-nums; }
+.rk-pay-row b { color: var(--text); display: inline-flex; align-items: center; gap: 6px; font-weight: 600; }
+.rk-pay-foot { margin-top: 10px; font-size: 12px; color: var(--text-3); }
+
+/* ---------- rewards ladder ---------- */
+.rk-ladder { padding: 18px 22px 20px; margin-bottom: 22px; max-width: 1100px; }
+.rk-ladder-h { display: flex; align-items: baseline; flex-wrap: wrap; gap: 4px 12px; font-weight: 600; margin-bottom: 14px; color: var(--text); }
+.rk-ladder-h span { font-weight: 400; font-size: 12.5px; color: var(--text-3); }
+.rk-ladder-row { display: grid; grid-template-columns: repeat(7, minmax(0, 1fr)); gap: 6px; }
+.rk-lt { display: flex; flex-direction: column; align-items: center; gap: 8px; padding: 14px 6px 12px; border-radius: 14px; text-align: center; }
+.rk-lt.cur { background: color-mix(in srgb, var(--c) 10%, transparent); box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--c) 40%, transparent); }
+.rk-lt.past { opacity: .55; }
+.rk-lt-name { font-size: 13px; font-weight: 600; margin-top: 4px; color: var(--text); }
+.rk-lt-rew { font-size: 11.5px; color: var(--text-3); display: flex; flex-direction: column; align-items: center; gap: 3px; min-height: 30px; }
+.rk-lt-rew b { color: var(--text-2); display: inline-flex; align-items: center; gap: 4px; font-weight: 600; font-variant-numeric: tabular-nums; }
+
+@media (max-width: 900px) {
+  .rk-top { grid-template-columns: 1fr; }
+  .rk-ladder-row { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+}
+
+/* ---------- rank-up overlay: blurred backdrop (no tint), shards, shockwave, burst, spin-in ---------- */
+.ru {
+  position: fixed; inset: 0; z-index: 180; display: flex; flex-direction: column; align-items: center; justify-content: center;
+  backdrop-filter: blur(14px); -webkit-backdrop-filter: blur(14px); opacity: 0; outline: none; color: var(--text);
+}
+.ru-stage { position: relative; width: 420px; height: 300px; display: grid; place-items: center; perspective: 800px; }
+.ru-stage > * { position: absolute; }
+.ru-rays { width: 520px; height: 520px; left: calc(50% - 260px); top: calc(50% - 260px); opacity: 0; animation: ru-spin 18s linear infinite; pointer-events: none; }
+.ru-rays i { position: absolute; left: 50%; top: 50%; width: 3px; height: 260px; margin-left: -1.5px; transform-origin: 50% 0; background: var(--c); opacity: .16; border-radius: 3px; display: block; }
+@keyframes ru-spin { to { transform: rotate(360deg); } }
+.ru-ring { width: 180px; height: 180px; border-radius: 50%; border: 3px solid var(--c); opacity: 0; }
+.ru-old, .ru-new { display: grid; place-items: center; width: 150px; height: 150px; }
+.ru-shard { position: absolute; inset: 0; }
+.ru-new { opacity: 0; transform-style: preserve-3d; }
+.ru-parts { inset: 0; pointer-events: none; }
+.ru-parts i { position: absolute; left: 50%; top: 50%; width: 8px; height: 8px; background: var(--c); display: block; border-radius: 1px; }
+.ru-kicker {
+  margin-top: 26px; font-size: 13px; font-weight: 700; letter-spacing: .32em; text-transform: uppercase; opacity: 0;
+  color: color-mix(in srgb, var(--c) 70%, var(--text));
+}
+.ru-name { font-size: 46px; font-weight: 700; letter-spacing: -.02em; margin-top: 4px; opacity: 0; color: var(--text); }
+.ru-rewards { display: flex; flex-wrap: wrap; justify-content: center; gap: 12px; margin-top: 22px; min-height: 64px; max-width: 90vw; }
+.ru-rew {
+  display: flex; align-items: center; gap: 10px; padding: 12px 16px; border-radius: 14px; font-weight: 600; opacity: 0;
+  background: color-mix(in srgb, var(--surface) 90%, transparent); border: 1px solid color-mix(in srgb, var(--text) 10%, transparent);
+  box-shadow: var(--shadow-2); color: var(--text); font-variant-numeric: tabular-nums;
+}
+.ru-rew small { display: block; font-weight: 400; color: var(--text-3); font-size: 12px; }
+.ru-rew .rk-title { margin-bottom: 2px; }
+.ru-parcel { display: inline-block; flex: none; width: 40px; height: 40px; line-height: 0; margin: -6px 0; }
+.ru-crown { color: #e39a1c; }
+.ru-btn { margin-top: 22px; height: 38px; padding: 0 26px; opacity: 0; }
+
+@media (prefers-reduced-motion: reduce) {
+  .ru-rays { animation: none; }
+  .rk-rp-bar i { transition: none; }
+}

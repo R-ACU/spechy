@@ -55,6 +55,7 @@ export const defaultSettings: Settings = {
   style: { defaultTone: "neutral", appRules: [], customRules: "", keepFillers: false },
   scratchpadPinned: false,
   onboarded: !ONBOARDING_MOCK,
+  leaderboardUrl: "",
 };
 
 const DAY = 86_400_000;

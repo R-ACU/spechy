@@ -3,6 +3,7 @@ import UpdateNotifications from "./UpdateNotifications";
 import { api } from "../lib/ipc";
 import type { Phase } from "../lib/ipc";
 import { IconButton } from "./ui";
+import { setThemePreview } from "../themes/preview";
 
 const call = (fn: () => Promise<unknown>) => { void fn().catch(() => {}); };
 
@@ -31,7 +32,7 @@ export default function TitleBar({ phase, maximized, onToggleSidebar, onAccount 
         <IconButton label={maximized ? "Restore" : "Maximize"} className="win-btn" onClick={() => call(api.toggleMaximizeWindow)}>
           {maximized ? <Copy size={15} /> : <Square size={15} />}
         </IconButton>
-        <IconButton label="Close" className="win-btn win-close" onClick={() => call(api.closeWindow)}><X size={18} /></IconButton>
+        <IconButton label="Close" className="win-btn win-close" onClick={() => { setThemePreview(null); call(api.closeWindow); }}><X size={18} /></IconButton>
       </div>
     </div>
   );

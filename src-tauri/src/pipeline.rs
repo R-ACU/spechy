@@ -255,6 +255,7 @@ pub fn init(handle: AppHandle) {
     }
     crate::pill::set_retry_handler(retry_from_pill);
     crate::pill::set_always_visible(settings.show_pill_always);
+    crate::economy::sync_pill_skin();
     // Prunes recordings past their retention.
     let _ = crate::failed::list();
     // Unmutes apps a crashed run left muted.
@@ -1155,6 +1156,9 @@ fn deliver(raw: &str, settings: &crate::model::Settings, delivery: Delivery) -> 
     };
     if let Err(e) = crate::db::insert_history_with_fixes(&entry, dictionary_fixes) {
         log::error!("the dictation could not be saved: {e}");
+    } else {
+        // Coins and RP for dictating, on their own thread so the dictation never waits.
+        crate::economy::on_dictation_saved(entry.word_count);
     }
     let _ = crate::db::bump_dictionary_uses(&used_dictionary);
     let _ = crate::db::bump_snippet_uses(&used_snippets);

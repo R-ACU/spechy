@@ -6,6 +6,7 @@ import { useEffect } from "react";
 import { isTauri } from "@tauri-apps/api/core";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { isThemeId, themeById } from "../themes/registry";
+import { usePreviewTheme } from "../themes/preview";
 import "../themes/themes.css";
 
 export type ThemeChoice = string;
@@ -62,13 +63,18 @@ if (typeof document !== "undefined") applyTheme(cachedTheme(), prefersDark());
 
 /** Keep <html> in sync with settings.theme, following the OS while the theme's base is "system". */
 export function useTheme(choice: ThemeChoice): void {
+  // A shop preview (themes/preview.ts) is shown but never cached or saved.
+  const preview = usePreviewTheme();
+  const shown = preview ?? choice;
   useEffect(() => {
     try { localStorage.setItem(THEME_KEY, isThemeId(choice) ? choice : "system"); } catch { /* storage blocked */ }
+  }, [choice]);
+  useEffect(() => {
     const mq = typeof window.matchMedia === "function" ? window.matchMedia("(prefers-color-scheme: dark)") : null;
-    const sync = () => applyTheme(choice, !!mq?.matches);
+    const sync = () => applyTheme(shown, !!mq?.matches);
     sync();
-    if (!mq || (themeById(choice)?.base ?? "system") !== "system") return;
+    if (!mq || (themeById(shown)?.base ?? "system") !== "system") return;
     mq.addEventListener("change", sync);
     return () => mq.removeEventListener("change", sync);
-  }, [choice]);
+  }, [shown]);
 }

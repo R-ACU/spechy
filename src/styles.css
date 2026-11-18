@@ -40,6 +40,17 @@
   --btn-disabled-text: #fff;
   --rec: #e5484d;           /* recording dot, close button hover */
   --warn: #e0a02a;          /* busy dot, auto-learned marker */
+  --coin: #f2b640;          /* Spechy coin: flat gold disc (Games only) */
+  --coin-rim: #b9781a;      /* coin outer rim */
+  --coin-rim-inner: #d4972a;/* coin inner ring */
+  --coin-ink: #7d4f0e;      /* the S on the coin */
+  --coin-drop: rgba(0, 0, 0, 0.35); /* hard drop under the coin */
+  /* Title rarities and the rank title (Games: shop, boxes, ranks, profile, leaderboard). One set for all. */
+  --rarity-common: #7a7670;
+  --rarity-rare: #2f74c8;
+  --rarity-epic: #7a4fd6;
+  --rarity-legendary: #b3730f;
+  --rarity-rank: #9a6a08;
   --shadow-1: 0 1px 2px rgba(20, 18, 15, 0.05);
   --shadow-2: 0 8px 24px rgba(20, 18, 15, 0.10);
   --shadow-3: 0 20px 60px rgba(20, 18, 15, 0.18);
@@ -91,6 +102,11 @@
   --btn-disabled-text: #7c7871;
   --rec: #e5484d;
   --warn: #e8b44a;
+  --rarity-common: #b8b8b8;
+  --rarity-rare: #6cb4ff;
+  --rarity-epic: #c09bff;
+  --rarity-legendary: #ffc46b;
+  --rarity-rank: #ffd166;
   --shadow-1: 0 1px 2px rgba(0, 0, 0, 0.4);
   --shadow-2: 0 8px 24px rgba(0, 0, 0, 0.5);
   --shadow-3: 0 20px 60px rgba(0, 0, 0, 0.65);
@@ -115,7 +131,10 @@ input, textarea { user-select: text; }
 a { color: inherit; }
 
 /* Focus ring only for keyboard focus. Mouse clicks and script focus (dialogs, popovers) stay clean. */
+/* The ring also needs real keyboard use: WebView2 can report :focus-visible after a click when focus
+   is set by script or the window is reactivated, so main.tsx sets data-kbd only after a key press. */
 :focus:not(:focus-visible) { outline: none; }
+html:not([data-kbd]) :focus-visible { outline: none !important; }
 button:focus-visible, a:focus-visible, [role="tab"]:focus-visible, [role="option"]:focus-visible { outline: 2px solid var(--text-3); outline-offset: 2px; }
 [tabindex="-1"]:focus { outline: none; }
 
@@ -150,7 +169,8 @@ textarea.input { height: auto; padding: 10px 12px; resize: vertical; line-height
 
 /* Side padding shrinks smoothly on narrow windows and grows on wide ones so content stays in a centred
    1200 px column (100% is the width of .content). Both are continuous, nothing snaps while resizing. */
-.page { padding: 56px max(clamp(32px, 5vw, 64px), calc((100% - 1200px) / 2)) 40px; height: 100%; overflow-y: auto; }
+/* Top 14px: the title centre sits on the sidebar logo centre (titlebar 48 + brand 56 / 2). */
+.page { padding: 14px max(clamp(32px, 5vw, 64px), calc((100% - 1200px) / 2)) 40px; height: 100%; overflow-y: auto; }
 .page-title { font-size: 26px; font-weight: 600; letter-spacing: -0.01em; margin: 0; }
 .page-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 40px; }
 .section-label { font-size: 12px; font-weight: 600; letter-spacing: 0.12em; color: var(--text-3); text-transform: uppercase; }
@@ -251,6 +271,8 @@ textarea.input { height: auto; padding: 10px 12px; resize: vertical; line-height
 
 .set-slider { display: flex; align-items: center; gap: 12px; }
 .set-slider-value { min-width: 44px; text-align: right; font-size: 14px; font-weight: 600; font-variant-numeric: tabular-nums; }
+.dev-keys { display: flex; gap: 6px; } /* Settings > Developer, dev builds only */
+.dev-note { margin: 10px 4px 0; }
 .set-range { -webkit-appearance: none; appearance: none; width: 180px; height: 16px; background: transparent; outline: none; cursor: pointer; }
 .set-range::-webkit-slider-runnable-track { height: 4px; border-radius: 999px; background: var(--border-strong); }
 .set-range::-webkit-slider-thumb { -webkit-appearance: none; appearance: none; width: 16px; height: 16px; margin-top: -6px; border-radius: 50%; background: var(--ink); box-shadow: 0 1px 2px rgba(20, 18, 15, 0.25); transition: transform 120ms var(--ease); }

@@ -1,9 +1,12 @@
 // Theme catalogue. Every theme resolves to a base palette (data-theme="light|dark", which the
 // tokens in styles.css key on) plus data-skin="<id>", which src/themes/themes.css keys on.
+// Premium themes (shop items, see premium/catalog.ts) carry the item id that unlocks them.
 // Heavy backdrops are loaded with a dynamic import so they land in their own chunk.
 
+import { PREMIUM_THEMES, type PremiumThemeId } from "./premium/catalog";
+
 export type ThemeBase = "light" | "dark" | "system";
-export type BackdropId = "glyph" | "dot";
+export type BackdropId = "glyph" | "dot" | PremiumThemeId;
 
 export interface ThemeDef {
   id: string;
@@ -12,6 +15,8 @@ export interface ThemeDef {
   base: ThemeBase;
   /** Animated field inside the content panel, loaded lazily by ThemeLayer. */
   backdrop?: BackdropId;
+  /** Shop item id; the theme is locked in Settings until this item is owned. */
+  itemId?: string;
 }
 
 export const THEMES: ThemeDef[] = [
@@ -21,6 +26,7 @@ export const THEMES: ThemeDef[] = [
   { id: "halftone", name: "Halftone", line: "Ink black with a flowing dot field, one blue accent.", base: "dark", backdrop: "dot" },
   { id: "ascii", name: "ASCII", line: "Near black with drifting character waves.", base: "dark", backdrop: "glyph" },
   { id: "oled", name: "OLED", line: "Pure black, quiet grey surfaces.", base: "dark" },
+  ...PREMIUM_THEMES.map((p): ThemeDef => ({ id: p.id, name: p.name, line: p.line, base: "dark", backdrop: p.id, itemId: p.itemId })),
 ];
 
 export function themeById(id: string): ThemeDef | undefined {
@@ -37,9 +43,14 @@ export interface BackdropModule {
 }
 
 const field = () => import("./fieldBackdrop");
+const premium = (id: PremiumThemeId) => () =>
+  import("./premium/engine").then((m) => ({ start: (c: HTMLCanvasElement) => { const h = m.startField(c, id, "main"); return () => h.stop(); } }));
 const loaders: Record<BackdropId, () => Promise<BackdropModule>> = {
   glyph: () => field().then((m) => ({ start: (c: HTMLCanvasElement) => m.start(c, "glyph") })),
   dot: () => field().then((m) => ({ start: (c: HTMLCanvasElement) => m.start(c, "dot") })),
+  bloom: premium("bloom"),
+  genesis: premium("genesis"),
+  horizon: premium("horizon"),
 };
 
 /** Load (or reuse) the backdrop chunk of a theme. Resolves to null for themes without one. */

@@ -9,12 +9,20 @@ export interface PixelTowerOptions {
   storageKey?: string;
   /** Internal pixels across the shorter side of the canvas. */
   shortSide?: number;
+  /** Hide the game's own game over HUD (the app shows a results card). */
+  appResults?: boolean;
   /** Element that receives keydown listeners. Default: window. */
   keyTarget?: EventTarget;
   reducedMotion?: boolean;
   /** Sound volume 0..1; default: the remembered value or 0.8. */
   volume?: number;
+  /** Spechy shop skin: "sunset" gives sunset-toned blocks. Default: the original colours. */
+  skin?: "sunset" | null;
 }
+
+export interface TowerSwatch { top: string; left: string; right: string; rim: string }
+/** Face colours (CSS) of `count` consecutive blocks, for the shop preview. */
+export function towerSkinSwatches(skin: "sunset" | null, count: number, offset?: number): TowerSwatch[];
 
 export interface PixelTowerState {
   state: "title" | "play" | "dying" | "over";

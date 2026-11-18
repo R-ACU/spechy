@@ -1,0 +1,3 @@
+# Copy to .dev.vars for `npm run dev`. Local values only, never real secrets.
+ADMIN_TOKEN=local-admin-token-change-me
+IP_HASH_SALT=local-salt

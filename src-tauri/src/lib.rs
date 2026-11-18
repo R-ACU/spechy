@@ -7,9 +7,11 @@ pub mod autostart;
 pub mod commands;
 pub mod db;
 pub mod ducking;
+pub mod economy;
 pub mod failed;
 pub mod hardware;
 pub mod hotkey;
+pub mod leaderboard;
 pub mod local_models;
 pub mod local_server;
 pub mod mictest;
@@ -102,9 +104,32 @@ pub fn run() {
             commands::window_minimize,
             commands::window_toggle_maximize,
             commands::window_close,
+            economy::economy_state,
+            economy::economy_award_game,
+            economy::economy_buy,
+            economy::economy_open_box,
+            economy::economy_equip,
+            economy::economy_dev_set_unlimited,
+            economy::economy_dev_add_coins,
+            economy::economy_dev_rank_up,
+            economy::economy_dev_grant_keys,
+            economy::economy_dev_reset,
+            leaderboard::leaderboard_status,
+            leaderboard::leaderboard_join,
+            leaderboard::leaderboard_leave,
+            leaderboard::leaderboard_board,
+            leaderboard::leaderboard_avatar,
+            leaderboard::leaderboard_update_me,
+            leaderboard::leaderboard_report,
+            leaderboard::leaderboard_sync,
+            leaderboard::leaderboard_avatar_save,
+            leaderboard::leaderboard_my_avatar,
+            leaderboard::leaderboard_avatar_remove,
+            leaderboard::leaderboard_claim_payout,
         ])
         .setup(move |app| {
             pipeline::init(app.handle().clone());
+            leaderboard::init();
             if let Err(e) = tray::init(app.handle()) {
                 log::error!("{e}");
             }

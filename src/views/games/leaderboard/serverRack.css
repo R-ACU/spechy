@@ -1,0 +1,41 @@
+/* Server of the leaderboard join scene (ServerRack.tsx): wireframe box stack plus the turning
+   Cloudflare logo. Lines in tokens; the logo's shadow is illustration art. */
+.lb-srv { flex: none; width: 150px; height: 208px; position: relative; }
+
+/* stack at the bottom of the server area (stack 128 px high, 8 px above the bottom) */
+.lb-stack { position: absolute; left: 50%; top: 72px; transform: translateX(-50%); display: block; overflow: visible; }
+.lb-box {
+  fill: none; stroke: var(--text); stroke-width: 1.75; stroke-linejoin: round; stroke-linecap: round;
+  transition: stroke 220ms var(--ease);
+}
+.lb-box.is-acc { stroke: var(--accent); }
+.lb-box.is-ok { stroke: var(--success); }
+.lb-box-led {
+  fill: currentColor; fill-opacity: 0; color: var(--text);
+  transition: fill-opacity 120ms linear, color 220ms var(--ease);
+}
+.lb-box.is-acc .lb-box-led { color: var(--accent); }
+.lb-box-led.is-on { fill-opacity: .85; }
+.lb-box-led.is-soft { fill-opacity: .45; }
+.lb-box-led.is-ok { color: var(--success); fill-opacity: .9; }
+.lb-box-led.is-bad { color: var(--danger); fill-opacity: .9; }
+
+/* the logo hovers above the top face; its flat shadow lands on that face */
+.lb-cf3d {
+  position: absolute; left: 50%; top: 24px; width: 132px; height: 66px; transform: translateX(-50%);
+  display: block; pointer-events: none; color: rgba(0, 0, 0, .16);
+}
+:root[data-theme="dark"] .lb-cf3d { color: rgba(0, 0, 0, .7); }
+
+.lb-srv .lb-ok {
+  position: absolute; top: 56px; right: -14px; width: 32px; height: 32px; border-radius: 50%; display: grid; place-items: center;
+  background: var(--success); color: var(--bg); box-shadow: 0 0 0 3px var(--surface);
+  opacity: 0; transform: scale(.5); transition: opacity 220ms var(--ease), transform 360ms cubic-bezier(.34, 1.56, .64, 1);
+}
+.lb-srv[data-phase="success"] .lb-ok { opacity: 1; transform: scale(1); }
+.lb-srv[data-phase="soon"] { opacity: .8; }
+
+@media (prefers-reduced-motion: reduce) {
+  .lb-box, .lb-box-led { transition: none; }
+  .lb-srv .lb-ok, .lb-srv[data-phase="success"] .lb-ok { transform: none; transition: opacity 200ms var(--ease); }
+}

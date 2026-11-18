@@ -73,6 +73,27 @@ function blockPalette(h, sat = 1) {
   };
 }
 
+// Spechy shop skin "Sunset Blocks" (not part of the standalone game): the block hue walks
+// back and forth through rose, coral, orange and amber; the faces come from blockPalette.
+const SUNSET_HUES = [348, 356, 4, 12, 20, 28, 36, 44];
+function sunsetHue(i) {
+  const n = SUNSET_HUES.length, period = 2 * (n - 1);
+  const k = ((i % period) + period) % period;
+  return SUNSET_HUES[k < n ? k : period - k];
+}
+const sunsetPalette = (i) => blockPalette(sunsetHue(i), 1.3);
+
+/** Face colours of the first `count` blocks of a skin as CSS strings, for the shop preview. */
+export function towerSkinSwatches(skin, count, offset = 0) {
+  const css = (c) => 'rgb(' + (c & 255) + ',' + ((c >>> 8) & 255) + ',' + ((c >>> 16) & 255) + ')';
+  const out = [];
+  for (let i = 0; i < count; i++) {
+    const p = skin === 'sunset' ? sunsetPalette(offset + i) : blockPalette(offset * HUE_STEP + i * HUE_STEP + 160);
+    out.push({ top: css(p.top), left: css(p.left), right: css(p.right), rim: css(p.rim) });
+  }
+  return out;
+}
+
 const WHITE = pack([255, 255, 255]);
 const GOLD = pack(hex('#ffd84a'));
 const INK = pack(hex('#1b1530'));
@@ -314,7 +335,6 @@ function create(canvas, opts = {}) {
   let shakeAmp = 0, shakeX = 0, shakeY = 0;
   let hitstop = 0, transition = null;
   let realTime = 0, stateT = 0, newBest = false, bestAnnounced = false;
-  let sfxRect = null;
   const hud = { str: '0', digits: [{ ch: '0', prev: '0', t: 1 }], w: 0, pop: 1, flash: WHITE, mega: 9 };
 
   // ---------- audio ----------
@@ -433,7 +453,9 @@ function create(canvas, opts = {}) {
 
   // ---------- world ----------
   const top = () => (blocks.length ? blocks[blocks.length - 1] : foundation);
-  const palFor = (i) => blockPalette(hue0 + i * HUE_STEP);
+  const palFor = opts.skin === 'sunset'
+    ? (i) => sunsetPalette(Math.floor(hue0 / 36) + i)
+    : (i) => blockPalette(hue0 + i * HUE_STEP);
   const speed = () => Math.min(78 + score * 2.0, 200);
 
   function spawnMoving() {
@@ -845,8 +867,9 @@ function create(canvas, opts = {}) {
     if (moving) projBox(moving, moving.pal);
     for (const d of debris) if (d.front) projBox(d, d.t < 0.05 ? FLASH : d.pal);
 
+    const appOver = opts.appResults && state === 'over';
     for (const r of rings) {
-      if (r.t < 0) continue;
+      if (appOver || r.t < 0) continue;
       const k = r.t / r.life, g = Math.round(easeOutCubic(k) * 14) * 2, b = r.b;
       const x0 = b.x0 - g, z1 = b.z1 + g;
       rhombusOutline(OX + Math.round((x0 - z1) * Z), OY + Math.round(((x0 + z1) / 2) * Z) - Math.round(b.y1 * Z),
@@ -857,14 +880,14 @@ function create(canvas, opts = {}) {
       rect(projX(p.x, p.z), projY(p.x, p.y, p.z), p.s, p.s, p.c);
     }
 
-    if (state !== 'title') drawScore();
+    if (state !== 'title' && !appOver) drawScore();
     for (const s of sparks) {
       const x = Math.round(s.x), y = Math.round(s.y);
       pset(x, y, s.c);
       if (s.t < s.life * 0.5) { pset(x - 1, y, s.c); pset(x + 1, y, s.c); pset(x, y - 1, s.c); pset(x, y + 1, s.c); }
     }
-    for (const p of popups) drawPopup(p);
-    drawUi();
+    if (!appOver) for (const p of popups) drawPopup(p);
+    if (!appOver) drawUi();
 
     if (transition) {
       const k = transition.phase === 'close' ? transition.t / transition.dur : 1 - transition.t / transition.dur;
@@ -932,10 +955,6 @@ function create(canvas, opts = {}) {
       else textC('BEST ' + best, iw / 2, y - 14, 1, GOLD, INK);
       if (blink && stateT > 0.6) textC('TAP TO RETRY', iw / 2, y + 2, 1, WHITE, INK);
     }
-    const label = muted ? 'SFX OFF' : 'SFX ON';
-    const lw = textWidth(label, 1), lx = iw - lw - 5, ly = 5;
-    text(label, lx, ly, 1, muted ? DIM : WHITE, INK);
-    sfxRect = [lx - 5, ly - 5, lw + 10, 17];
   }
 
   // ---------- input ----------
@@ -953,12 +972,6 @@ function create(canvas, opts = {}) {
   }
   function onPointer(e) {
     e.preventDefault();
-    const r = canvas.getBoundingClientRect();
-    const x = ((e.clientX - r.left) / r.width) * iw, y = ((e.clientY - r.top) / r.height) * ih;
-    if (sfxRect && x >= sfxRect[0] && x < sfxRect[0] + sfxRect[2] && y >= sfxRect[1] && y < sfxRect[1] + sfxRect[3]) {
-      setMuted(!muted);
-      return;
-    }
     press();
   }
   function onContextMenu(e) { e.preventDefault(); }

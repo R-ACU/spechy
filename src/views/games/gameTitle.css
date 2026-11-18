@@ -1,0 +1,13 @@
+/* Per-game title typography (game art: fixed colours are allowed here). */
+.gt { display: inline-block; white-space: nowrap; --gt-size: 15px; }
+.gt-tower, .gt-comet { font-family: "Silkscreen", monospace; font-weight: 700; text-transform: uppercase; letter-spacing: .06em; font-size: var(--gt-size); line-height: 1; }
+.gt-tower i, .gt-comet i { font-style: normal; text-shadow: 1.5px 1.5px 0 #1a1830; }
+.gt-comet i { text-shadow: 1.5px 1.5px 0 #14101c; }
+.gt-snake { font-family: "Pixelify Sans", monospace; font-weight: 600; letter-spacing: .03em; font-size: calc(var(--gt-size) * 1.27); line-height: 1; }
+.gt-snake i { font-style: normal; color: #4fd1b4; text-shadow: 1.5px 1.5px 0 #0a3b3a; }
+.gt-snake i:nth-child(even) { color: #2fa38f; }
+.gt-snake i.dot { display: inline-block; width: .3em; height: .3em; margin-left: .22em; background: #f2c14e; box-shadow: 1.5px 1.5px 0 #0a3b3a; }
+.gt[data-size="tab"] { --gt-size: 13px; }
+.lb-seg .gt[data-size="tab"] { transform: translateY(1px); }
+.gt[data-size="card"] { --gt-size: 16px; }
+.gt[data-size="header"] { --gt-size: 22px; }

@@ -19,6 +19,12 @@ fn conn() -> Result<std::sync::MutexGuard<'static, Connection>, String> {
     cell.lock().map_err(|_| "Database lock is poisoned".to_string())
 }
 
+/// Run `f` with the app database (used by `economy.rs`, which opens its own transactions).
+pub fn with_conn<T>(f: impl FnOnce(&mut Connection) -> Result<T, String>) -> Result<T, String> {
+    let mut c = conn()?;
+    f(&mut c)
+}
+
 fn mode_to_str(mode: DictationMode) -> &'static str {
     match mode {
         DictationMode::PushToTalk => "push-to-talk",
@@ -69,6 +75,7 @@ pub fn init() -> Result<(), String> {
     let path = crate::settings::data_dir().join("spechy.db");
     let c = Connection::open(&path).map_err(|e| format!("Could not open the database: {e}"))?;
     init_schema(&c)?;
+    crate::economy::init_schema(&c)?;
     seed_transforms(&c)?;
     CONN.set(Mutex::new(c)).map_err(|_| "Database was already initialized".to_string())?;
     Ok(())
@@ -722,6 +729,8 @@ pub fn export_json() -> Result<String, String> {
         "snippets": list_snippets()?,
         "transforms": list_transforms()?,
         "scratchpad": get_scratchpad()?,
+        // Coins, ledger, items, rank and titles. Never the leaderboard token (leaderboard.json).
+        "economy": crate::economy::export_value()?,
     });
     serde_json::to_string_pretty(&value).map_err(|e| format!("Could not build the export: {e}"))
 }

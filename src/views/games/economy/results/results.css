@@ -1,0 +1,226 @@
+/* Per-game results screens (Pixel Tower, Voice Snake, Comet Keeper). These are game art,
+   so fixed colours are allowed here (AGENTS.md exception for views/games/). Layout and
+   behaviour are shared through the .gr-* classes; every game styles them under its root. */
+@import "@fontsource/silkscreen/700.css";
+@import "@fontsource/pixelify-sans/600.css";
+
+/* ---------- shared layout ---------- */
+.gr {
+  --gr-text: #1b1530; --gr-text-2: #4a3f66; --gr-text-3: #6a5f86; --gr-line: rgba(27, 21, 48, .14);
+  position: relative; overflow: hidden; isolation: isolate;
+  pointer-events: auto; width: 380px; max-width: calc(100% - 32px); padding: 22px 24px 24px;
+  color: var(--gr-text); text-align: left;
+}
+.gr > :not([aria-hidden="true"]) { position: relative; z-index: 2; }
+.gr-k { font-size: 11.5px; font-weight: 600; letter-spacing: .14em; text-transform: uppercase; color: var(--gr-text-3); }
+.gr-title { display: block; margin-top: 8px; min-height: 22px; }
+.gr-title-text { font-weight: 700; font-size: 17px; }
+.gr-score { font-size: 52px; line-height: 1; margin: 12px 0 8px; font-variant-numeric: tabular-nums; }
+.gr-best, .gr-muted { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; font-weight: 600; }
+.gr-muted { color: var(--gr-text-3); font-weight: 500; }
+.gr-rows { margin: 16px 0 6px; }
+.gr-row {
+  display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 9px 0; font-size: 14px;
+  color: var(--gr-text-2); border-bottom: 1px solid var(--gr-line);
+  opacity: 0; transform: translateX(-6px); transition: opacity 200ms ease-out, transform 200ms ease-out;
+}
+.gr-row.on { opacity: 1; transform: none; }
+.gr-row-label { display: inline-flex; align-items: center; gap: 10px; min-width: 0; }
+.gr-bullet { display: inline-grid; place-items: center; width: 12px; height: 12px; flex: none; }
+.gr-bullet i { display: block; }
+.gr-row b { display: inline-flex; align-items: center; gap: 6px; color: var(--gr-text); font-variant-numeric: tabular-nums; }
+.gr-row-total { color: var(--gr-text); font-weight: 600; border-bottom: 0; }
+.gr-row-total b { font-size: 18px; }
+.gr-row-promo { color: var(--gr-text); }
+.gr-note { margin: 4px 0 0; font-size: 12px; color: var(--gr-text-3); }
+.gr-actions { display: flex; gap: 8px; margin-top: 14px; }
+.gr-actions .btn { flex: 1; }
+.gr-actions .gr-btn-1 { background: var(--gr-b1); color: var(--gr-b1-ink); }
+.gr-actions .gr-btn-1:hover { background: var(--gr-b1-hover); }
+.gr-actions .gr-btn-2 { background: var(--gr-b2); color: var(--gr-b2-ink); }
+.gr-actions .gr-btn-2:hover { background: var(--gr-b2-hover); }
+.gr-actions .btn:focus-visible { outline: 2px solid var(--gr-focus); outline-offset: 2px; }
+.gr-pixel { display: block; image-rendering: pixelated; image-rendering: crisp-edges; }
+
+/* ---------- Pixel Tower: pastel sky bands, ink frame, pixel score, stacking blocks ---------- */
+.gr-tower {
+  --gr-b1: #1b1530; --gr-b1-ink: #f4f1ea; --gr-b1-hover: #2c2450;
+  --gr-b2: #f4f1ea; --gr-b2-ink: #1b1530; --gr-b2-hover: #ffffff; --gr-focus: #1b1530;
+  background: linear-gradient(180deg,
+    #f0a98f 0 14%, #f2bd9b 14% 26%, #f3d3a6 26% 46%, #d6dcae 46% 62%, #b4d8b6 62% 80%, #8fd1bf 80% 100%);
+  border: 3px solid #1b1530; border-radius: 0;
+  box-shadow: 6px 6px 0 rgba(27, 21, 48, .32);
+  animation: gr-tw-in 280ms steps(4, end) both;
+}
+@keyframes gr-tw-in { from { opacity: 0; transform: translateY(12px); } to { opacity: 1; transform: none; } }
+.gr-tower .gr-k { color: #4a3f66; font-family: "Silkscreen", monospace; font-weight: 700; letter-spacing: .1em; }
+.gr-tower .gr-score { font-family: "Silkscreen", monospace; font-weight: 700; font-size: 50px; color: #1b1530; text-shadow: 3px 3px 0 #ffffff; letter-spacing: .02em; }
+.gr-tower .gr-best { padding: 3px 8px; background: #ffd84a; color: #1b1530; box-shadow: 2px 2px 0 #1b1530; font-family: "Silkscreen", monospace; font-weight: 700; font-size: 11px; letter-spacing: .04em; }
+.gr-tower .gr-muted { color: #4a3f66; }
+.gr-tower .gr-rows { background: rgba(244, 241, 234, .9); border: 2px solid #1b1530; padding: 2px 12px; box-shadow: 3px 3px 0 rgba(27, 21, 48, .25); }
+.gr-tower .gr-row { border-bottom: 2px dotted rgba(27, 21, 48, .18); }
+.gr-tower .gr-row-total { border-bottom: 0; }
+.gr-tower .gr-row-total b { font-family: "Silkscreen", monospace; font-weight: 700; font-size: 17px; }
+.gr-tower .gr-bullet i { width: 8px; height: 8px; box-shadow: inset 0 -3px 0 rgba(27, 21, 48, .28), 0 0 0 1px #1b1530; }
+.gr-tower .gr-rp { color: #64569e; font-weight: 700; }
+.gr-tower .gr-actions .btn { border-radius: 0; box-shadow: 3px 3px 0 rgba(27, 21, 48, .35); border: 2px solid #1b1530; }
+.gr-tower .gr-actions .btn:active { transform: translate(2px, 2px); box-shadow: 1px 1px 0 rgba(27, 21, 48, .35); }
+.gr-tw-deco { position: absolute; inset: 0; z-index: 1; pointer-events: none; }
+.gr-tw-stack { position: absolute; right: 34px; top: 20px; width: 48px; height: 112px; }
+.gr-tw-block { position: absolute; left: 0; transform: translateY(0); animation: gr-tw-drop 360ms cubic-bezier(.3, 0, .6, 1) both; }
+@keyframes gr-tw-drop {
+  0% { opacity: 0; transform: translateY(-90px); }
+  15% { opacity: 1; }
+  78% { transform: translateY(0); }
+  88% { transform: translateY(-4px); }
+  100% { opacity: 1; transform: translateY(0); }
+}
+.gr-tw-cloud { position: absolute; opacity: .95; }
+.gr-tw-cloud.a { right: 118px; top: 30px; animation: gr-tw-cloud 14s linear infinite alternate; }
+.gr-tw-cloud.b { right: 8px; top: 156px; opacity: .8; animation: gr-tw-cloud 18s linear infinite alternate-reverse; }
+@keyframes gr-tw-cloud { from { transform: translateX(-10px); } to { transform: translateX(14px); } }
+.gr-tw-spark { position: absolute; animation: gr-tw-twinkle 1.2s steps(2, end) infinite; }
+.gr-tw-spark.s1 { left: -10px; top: 0; }
+.gr-tw-spark.s2 { left: 50px; top: 10px; animation-delay: .6s; }
+@keyframes gr-tw-twinkle { 0%, 100% { opacity: 1; } 50% { opacity: .25; } }
+
+/* ---------- Voice Snake: dark teal dotted board, mic with waves, slithering snake ---------- */
+.gr-snake {
+  --gr-text: #e4f4ee; --gr-text-2: #a9cfc3; --gr-text-3: #6fa596; --gr-line: rgba(95, 199, 166, .16);
+  --gr-b1: #36b384; --gr-b1-ink: #071311; --gr-b1-hover: #4fd8a4;
+  --gr-b2: #1a3a33; --gr-b2-ink: #e4f4ee; --gr-b2-hover: #21483f; --gr-focus: #7fe6c0;
+  background:
+    radial-gradient(circle at 8px 8px, #2a5a50 1.2px, transparent 1.7px) 0 0 / 16px 16px,
+    #0e211d;
+  border: 1px solid #1f5f58; border-radius: 18px;
+  box-shadow: 0 18px 40px rgba(4, 14, 12, .45), inset 0 0 0 1px rgba(127, 230, 192, .05);
+  animation: gr-sn-in 300ms cubic-bezier(.2, .8, .2, 1) both;
+}
+/* Flat glow: concentric low-opacity rings instead of a smooth radial fade. */
+.gr-snake::before {
+  content: ""; position: absolute; z-index: 0; pointer-events: none; right: 40px; top: 22px; width: 56px; height: 56px; margin: -28px -28px 0 0; border-radius: 50%;
+  background: rgba(127, 230, 192, .06);
+  box-shadow: 0 0 0 28px rgba(127, 230, 192, .035), 0 0 0 56px rgba(127, 230, 192, .025);
+}
+@keyframes gr-sn-in { from { opacity: 0; transform: translateY(8px) scale(.985); } to { opacity: 1; transform: none; } }
+.gr-snake .gr-score { font-family: "Pixelify Sans", monospace; font-weight: 600; font-size: 58px; color: #a6f0d4; text-shadow: 3px 3px 0 #0a3b3a; margin-bottom: 6px; }
+.gr-snake .gr-best { padding: 3px 9px; border-radius: 999px; background: rgba(242, 193, 78, .16); color: #f2c14e; }
+.gr-snake .gr-rows { margin-top: 8px; padding: 2px 14px; border-radius: 12px; background: rgba(7, 19, 17, .62); border: 1px solid #1a3a33; }
+.gr-snake .gr-row { border-bottom: 1px dashed rgba(95, 199, 166, .2); }
+.gr-snake .gr-row-total { border-bottom: 0; }
+.gr-snake .gr-row-total b { font-family: "Pixelify Sans", monospace; font-size: 20px; }
+.gr-snake .gr-rp { color: #7fe6c0; }
+.gr-snake .gr-bullet i { position: relative; width: 9px; height: 9px; border-radius: 50%; background: #f0736f; box-shadow: inset -2px -2px 0 rgba(0, 0, 0, .18); }
+.gr-snake .gr-bullet i::after { content: ""; position: absolute; left: 5px; top: -3px; width: 4px; height: 3px; border-radius: 3px 0; background: #36b384; }
+.gr-snake .gr-bullet i.gold { background: #f2c14e; }
+.gr-snake .gr-actions .btn { border-radius: 10px; }
+.gr-sn-mic { position: absolute; right: 22px; top: 18px; z-index: 1; width: 120px; height: 80px; display: flex; justify-content: flex-end; }
+.gr-sn-mic .gr-pixel { position: relative; z-index: 1; }
+.gr-sn-wave {
+  position: absolute; right: 30px; top: 18px; width: 22px; height: 22px; border-radius: 50%;
+  border: 3px solid transparent; border-left-color: #5fc7a6; opacity: 0;
+  animation: gr-sn-wave 1.8s ease-out infinite;
+}
+.gr-sn-wave.w2 { animation-delay: .6s; }
+.gr-sn-wave.w3 { animation-delay: 1.2s; }
+@keyframes gr-sn-wave {
+  0% { opacity: 0; transform: translateX(0) scale(.6); }
+  25% { opacity: .9; }
+  100% { opacity: 0; transform: translateX(-60px) scale(1.7); }
+}
+.gr-best-on .gr-sn-wave { border-left-color: #a6f0d4; }
+.gr-sn-path { display: block; width: 100%; height: 34px; margin: 10px 0 0; overflow: visible; }
+.gr-sn-body, .gr-sn-shine {
+  fill: none; stroke-linecap: round; stroke-linejoin: round;
+  stroke-dasharray: var(--len); stroke-dashoffset: var(--len);
+  animation: gr-sn-draw 900ms linear 120ms forwards;
+}
+.gr-sn-body { stroke: #36b384; stroke-width: 11; }
+.gr-sn-shine { stroke: #7fe6c0; stroke-width: 3; opacity: .55; }
+@keyframes gr-sn-draw { to { stroke-dashoffset: 0; } }
+.gr-sn-head circle { fill: #4fd8a4; }
+.gr-sn-head circle.eye { fill: #071311; }
+.gr-sn-apple circle { fill: #f0736f; }
+.gr-sn-apple .leaf { fill: #36b384; }
+.gr-sn-apple { transform-origin: 274px 13px; animation: gr-sn-eat 220ms ease-in 900ms forwards; }
+.gr-best-on .gr-sn-apple circle { fill: #f2c14e; }
+@keyframes gr-sn-eat { to { opacity: 0; transform: scale(.3); } }
+
+/* ---------- Comet Keeper: starfield, comet streak, lantern face, icy and warm accents ---------- */
+.gr-comet {
+  --gr-text: #e9e6ff; --gr-text-2: #b7b1e0; --gr-text-3: #8a84b8; --gr-line: rgba(201, 196, 238, .12);
+  --gr-b1: #ffd84a; --gr-b1-ink: #141228; --gr-b1-hover: #ffe27a;
+  --gr-b2: #2d2a55; --gr-b2-ink: #e9e6ff; --gr-b2-hover: #3a3670; --gr-focus: #6fdcff;
+  background: #1d1b3c;
+  border: 1px solid #3a3670; border-radius: 18px;
+  box-shadow: 0 18px 44px rgba(10, 8, 24, .5);
+  animation: gr-cm-in 320ms cubic-bezier(.2, .8, .2, 1) both;
+}
+/* Flat planet glow behind the lantern: concentric low-opacity rings. */
+.gr-comet::before {
+  content: ""; position: absolute; z-index: 0; pointer-events: none; right: 52px; top: 52px; width: 40px; height: 40px; margin: -20px -20px 0 0; border-radius: 50%;
+  background: rgba(255, 210, 122, .1);
+  box-shadow: 0 0 0 20px rgba(255, 210, 122, .06), 0 0 0 42px rgba(255, 210, 122, .04);
+}
+@keyframes gr-cm-in { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: none; } }
+.gr-comet .gr-score { font-family: "Silkscreen", monospace; font-weight: 700; font-size: 50px; color: #ffd84a; text-shadow: 3px 3px 0 #14101c; }
+.gr-comet .gr-best { padding: 3px 9px; border-radius: 999px; background: rgba(255, 216, 74, .14); color: #ffd84a; }
+.gr-comet .gr-rows { padding: 2px 14px; border-radius: 12px; background: rgba(20, 18, 40, .7); border: 1px solid #2d2a55; }
+.gr-comet .gr-row-total { border-bottom: 0; }
+.gr-comet .gr-row-total b { font-family: "Silkscreen", monospace; font-weight: 700; font-size: 17px; color: #ffd84a; }
+.gr-comet .gr-rp { color: #7fd0f0; }
+.gr-comet .gr-bullet i { width: 7px; height: 7px; background: #ff9a5a; box-shadow: -3px 3px 0 -1px #c8456e, -6px 6px 0 -2px #7a3470; }
+.gr-comet .gr-bullet i.ice { background: #9fe6ff; box-shadow: -3px 3px 0 -1px #4a7fe0, -6px 6px 0 -2px #3a4aa0; }
+.gr-comet .gr-actions .btn { border-radius: 10px; }
+.gr-cm-stars { position: absolute; inset: 0; z-index: 0; pointer-events: none; }
+.gr-cm-stars i { position: absolute; width: 2px; height: 2px; background: #e9e6ff; animation: gr-cm-twinkle 3.2s ease-in-out infinite; }
+.gr-cm-stars i.dim { background: #5d5890; animation: none; }
+.gr-cm-stars i.big { width: 3px; height: 3px; box-shadow: 3px 0 0 -1px rgba(233, 230, 255, .5), -3px 0 0 -1px rgba(233, 230, 255, .5), 0 3px 0 -1px rgba(233, 230, 255, .5), 0 -3px 0 -1px rgba(233, 230, 255, .5); }
+@keyframes gr-cm-twinkle { 0%, 100% { opacity: 1; } 50% { opacity: .35; } }
+.gr-cm-lantern { position: absolute; right: 24px; top: 18px; z-index: 1; animation: gr-cm-bob 3.4s ease-in-out 900ms infinite; }
+.gr-cm-lantern .gr-pixel { opacity: 0; animation: gr-cm-pop 320ms cubic-bezier(.2, 1.4, .4, 1) 120ms forwards; }
+@keyframes gr-cm-pop { from { opacity: 0; transform: scale(.7); } to { opacity: 1; transform: none; } }
+@keyframes gr-cm-bob { 0%, 100% { transform: translateY(0); } 50% { transform: translateY(-3px); } }
+.gr-best-on .gr-cm-lantern { animation-name: gr-cm-hop; animation-duration: 1.6s; }
+@keyframes gr-cm-hop { 0%, 60%, 100% { transform: translateY(0); } 30% { transform: translateY(-6px); } }
+/* The comet streaks in from the upper left and breaks on the shield of the lantern. */
+.gr-cm-comet {
+  position: absolute; z-index: 1; right: 64px; top: 40px; width: 150px; height: 10px;
+  transform-origin: 100% 50%; transform: rotate(18deg); opacity: 0; pointer-events: none;
+  animation: gr-cm-streak 620ms cubic-bezier(.5, 0, .9, .6) 120ms forwards;
+}
+.gr-cm-comet .trail { position: absolute; right: 6px; top: 2px; width: 140px; height: 6px; border-radius: 6px; background: linear-gradient(90deg, color-mix(in srgb, var(--cm-t1, #7a3470) 20%, transparent) 0 20px, color-mix(in srgb, var(--cm-t1, #7a3470) 45%, transparent) 20px 40px, var(--cm-t1, #7a3470) 40px 60px, color-mix(in srgb, var(--cm-t1, #7a3470) 50%, var(--cm-t2, #c8456e)) 60px 80px, var(--cm-t2, #c8456e) 80px 100px, color-mix(in srgb, var(--cm-t2, #c8456e) 50%, var(--cm-t3, #ff6b5a)) 100px 120px, var(--cm-t3, #ff6b5a) 120px 140px); /* hard-stop pixel segments */ }
+.gr-cm-comet .head { position: absolute; right: 0; top: -1px; width: 12px; height: 12px; border-radius: 50%; background: #ff9a5a; box-shadow: inset 0 0 0 3px #ff9a5a, inset 0 0 0 6px #fff0d0, 0 0 12px rgba(255, 154, 90, .6); }
+@keyframes gr-cm-streak {
+  0% { opacity: 0; translate: -260px -90px; }
+  20% { opacity: 1; }
+  82% { opacity: 1; translate: 0 0; }
+  100% { opacity: 0; translate: 6px 2px; }
+}
+.gr-cm-sparks { position: absolute; left: 14px; top: 16px; width: 1px; height: 1px; z-index: 2; }
+.gr-cm-sparks i { position: absolute; width: 3px; height: 3px; background: #ffd84a; opacity: 0; animation: gr-cm-spark 420ms ease-out 640ms forwards; }
+.gr-cm-sparks i:nth-child(2) { background: #fff3c4; --dx: -20px; --dy: -6px; }
+.gr-cm-sparks i:nth-child(1) { --dx: -14px; --dy: -16px; }
+.gr-cm-sparks i:nth-child(3) { background: #ff9a5a; --dx: -4px; --dy: -20px; }
+.gr-cm-sparks i:nth-child(4) { background: #9fe6ff; --dx: -22px; --dy: 6px; }
+@keyframes gr-cm-spark { 0% { opacity: 1; transform: none; } 100% { opacity: 0; transform: translate(var(--dx), var(--dy)); } }
+
+@media (prefers-reduced-motion: reduce) {
+  .gr, .gr-tw-block, .gr-tw-cloud, .gr-tw-spark, .gr-sn-wave, .gr-cm-stars i, .gr-cm-lantern, .gr-cm-sparks i { animation: none; }
+  .gr-sn-wave.w1 { opacity: .6; }
+  .gr-sn-body, .gr-sn-shine { animation: none; stroke-dashoffset: 0; }
+  .gr-sn-apple { animation: none; opacity: 0; }
+  .gr-cm-comet { animation: none; opacity: 0; }
+  .gr-cm-lantern .gr-pixel { animation: none; opacity: 1; }
+  .gr-row { transition: none; }
+}
+
+/* Equipped game skins: the decorations follow the skin colours (set as variables by the screens). */
+.gr-skin-neon .gr-sn-body { stroke: var(--sn-body); filter: drop-shadow(0 0 5px var(--sn-glow)); }
+.gr-skin-neon .gr-sn-shine { stroke: var(--sn-shine); }
+.gr-skin-neon .gr-sn-head circle { fill: var(--sn-head); }
+.gr-skin-neon .gr-sn-head circle.eye { fill: var(--sn-eye); }
+.gr-skin-neon .gr-sn-apple circle { fill: var(--sn-apple); }
+.gr-skin-neon .gr-sn-apple .leaf { fill: var(--sn-leaf); }
+.gr-skin-neon.gr-best-on .gr-sn-apple circle { fill: #f2c14e; }
+.gr-skin-ice .gr-cm-comet .head { background: var(--cm-head); box-shadow: inset 0 0 0 3px var(--cm-head), inset 0 0 0 6px var(--cm-core), 0 0 12px var(--cm-t3); }

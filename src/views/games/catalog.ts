@@ -1,6 +1,29 @@
 // The games shown in the Games tab. Each one is its own lazily loaded module.
 import type { ComponentType } from "react";
 import { paint as paintCometCover } from "./cometKeeper/cover";
+import { paint as paintTowerCover } from "./covers/towerCover";
+import { paint as paintSnakeCover } from "./covers/snakeCover";
+
+/** Sound state a game hands to the shared play header (button plus volume popover).
+ *  The game persists both values under its own keys (`<best key>.muted`, `.volume`). */
+export interface SoundControl {
+  /** Audible: not muted and volume above 0. */
+  on: boolean;
+  muted: boolean;
+  /** 0..1 */
+  volume: number;
+  toggle: () => void;
+  setMuted: (muted: boolean) => void;
+  /** Moving the volume above 0 also unmutes. */
+  setVolume: (volume: number) => void;
+}
+
+/** A finished round, or one the player left (`quit`). Feeds the coin and RP award. */
+export interface RoundResult {
+  score: number;
+  newBest: boolean;
+  quit: boolean;
+}
 
 export interface GameProps {
   /** Report a new personal best so the hub can show it. `key` picks the record of a game
@@ -8,6 +31,11 @@ export interface GameProps {
   onBest: (best: number, key?: string) => void;
   /** Which record the header shows right now; null shows all of them. */
   onBestKey?: (key: string | null) => void;
+  /** Publish the sound toggle to the play header (null removes it). Games without sound skip it. */
+  onSound?: (control: SoundControl | null) => void;
+  /** A round ended (game over) or was left mid round (unmount while playing with a score).
+   *  Called at most once per round. */
+  onRoundEnd?: (result: RoundResult) => void;
 }
 
 export type GameModule = { default: ComponentType<GameProps> };
@@ -19,7 +47,7 @@ export interface BestSlot {
 }
 
 export interface GameInfo {
-  id: string;
+  id: "tower" | "snake" | "comet";
   title: string;
   tagline: string;
   /** Short control hint shown on the card. */
@@ -45,6 +73,7 @@ export const GAMES: GameInfo[] = [
     controls: "Space or click",
     bests: [{ key: TOWER_BEST_KEY }],
     load: () => import("./PixelTowerGame"),
+    cover: paintTowerCover,
   },
   {
     id: "snake",
@@ -56,6 +85,7 @@ export const GAMES: GameInfo[] = [
       { key: SNAKE_KEYS_BEST_KEY, label: "Keys" },
     ],
     load: () => import("./VoiceSnake"),
+    cover: paintSnakeCover,
   },
   {
     id: "comet",

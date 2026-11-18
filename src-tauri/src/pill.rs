@@ -82,6 +82,60 @@ const CANCEL_CIRCLE: [f32; 3] = [0.290, 0.290, 0.290]; // #4a4a4a
 const WHITE: [f32; 3] = [1.0, 1.0, 1.0];
 const BLACK: [f32; 3] = [0.05, 0.05, 0.05];
 
+// ------------------------------------------------------------------ skins
+// Pill skins from the shop (equip slot "pill"). A skin only tints the level
+// dots while recording; body, rim, buttons and the other states stay as they
+// are. Keep in sync with `src/views/games/shop/pillSkins.ts`.
+
+/// Shop item id and its accent color as 0xRRGGBB.
+pub const PILL_SKINS: [(&str, u32); 3] = [
+    ("pill-amber", 0xe8b44a),
+    ("pill-mint", 0x4fd8a4),
+    ("pill-coral", 0xf0736f),
+];
+
+/// Accent color of the equipped skin; 0 means no skin (default white dots).
+/// Bit 24 marks "set" so black could never be confused with "none".
+static SKIN_ACCENT: AtomicU32 = AtomicU32::new(0);
+const SKIN_SET: u32 = 1 << 24;
+
+/// The accent color for a pill skin item, `None` for unknown ids or no skin.
+pub fn skin_accent(item_id: Option<&str>) -> Option<[f32; 3]> {
+    let id = item_id?;
+    PILL_SKINS
+        .iter()
+        .find(|(skin, _)| *skin == id)
+        .map(|(_, rgb)| rgb_to_color(*rgb))
+}
+
+fn rgb_to_color(rgb: u32) -> [f32; 3] {
+    [
+        ((rgb >> 16) & 0xff) as f32 / 255.0,
+        ((rgb >> 8) & 0xff) as f32 / 255.0,
+        (rgb & 0xff) as f32 / 255.0,
+    ]
+}
+
+/// Sets the equipped pill skin. Cheap (one atomic store), safe from any
+/// thread; the recording dots animate every frame, so no repaint is needed.
+pub fn set_skin(item_id: Option<&str>) {
+    let packed = item_id
+        .and_then(|id| PILL_SKINS.iter().find(|(skin, _)| *skin == id))
+        .map(|(_, rgb)| SKIN_SET | rgb)
+        .unwrap_or(0);
+    SKIN_ACCENT.store(packed, Ordering::Relaxed);
+}
+
+/// Color of the recording dots: the skin accent or the default white.
+fn recording_dot_color() -> [f32; 3] {
+    let packed = SKIN_ACCENT.load(Ordering::Relaxed);
+    if packed & SKIN_SET == 0 {
+        WHITE
+    } else {
+        rgb_to_color(packed & 0xff_ffff)
+    }
+}
+
 // ------------------------------------------------------------------ globals
 
 struct Callbacks {
@@ -762,6 +816,11 @@ fn draw_dynamic(canvas: &mut Canvas, state: &PillState, layout: &Layout, frame: 
     let spacing = DOT_SPACING * scale;
     let center = (cancel_x + button_radius + confirm_x - button_radius) / 2.0;
     let left = center - spacing * 4.5;
+    let dot_color = if matches!(state, PillState::Recording { .. }) {
+        recording_dot_color()
+    } else {
+        WHITE
+    };
 
     for index in 0..10 {
         let dot_x = left + spacing * index as f32;
@@ -783,7 +842,137 @@ fn draw_dynamic(canvas: &mut Canvas, state: &PillState, layout: &Layout, frame: 
             }
             _ => (DOT_RADIUS * scale, 0.5),
         };
-        canvas.circle(dot_x, middle, dot_radius, WHITE, alpha);
+        canvas.circle(dot_x, middle, dot_radius, dot_color, alpha);
+    }
+}
+
+// ------------------------------------------------------------ shared tests
+
+#[cfg(test)]
+mod skin_tests {
+    use super::*;
+
+    fn hex(color: [f32; 3]) -> u32 {
+        let c = |v: f32| (v * 255.0).round() as u32;
+        (c(color[0]) << 16) | (c(color[1]) << 8) | c(color[2])
+    }
+
+    #[test]
+    fn pill_skin_colors_map_to_shop_items() {
+        assert_eq!(skin_accent(Some("pill-amber")).map(hex), Some(0xe8b44a));
+        assert_eq!(skin_accent(Some("pill-mint")).map(hex), Some(0x4fd8a4));
+        assert_eq!(skin_accent(Some("pill-coral")).map(hex), Some(0xf0736f));
+        assert_eq!(skin_accent(None), None);
+        assert_eq!(skin_accent(Some("tower-gold")), None);
+        // Every pill item in the shop has a color, and every color is a shop item.
+        let shop_pills: Vec<&str> = crate::economy::SHOP
+            .iter()
+            .filter(|item| item.kind.as_str() == "pill")
+            .map(|item| item.id)
+            .collect();
+        let skins: Vec<&str> = PILL_SKINS.iter().map(|(id, _)| *id).collect();
+        assert_eq!(shop_pills, skins);
+    }
+
+    #[test]
+    fn set_skin_switches_recording_dots_and_back() {
+        set_skin(Some("pill-coral"));
+        assert_eq!(hex(recording_dot_color()), 0xf0736f);
+        set_skin(Some("not-a-skin"));
+        assert_eq!(recording_dot_color(), WHITE);
+        set_skin(Some("pill-mint"));
+        assert_eq!(hex(recording_dot_color()), 0x4fd8a4);
+        set_skin(None);
+        assert_eq!(recording_dot_color(), WHITE);
+    }
+
+    /// Minimal PNG writer (stored deflate blocks), enough for test previews.
+    fn write_png(path: &std::path::Path, width: u32, height: u32, rgba: &[u8]) {
+        fn crc32(data: &[u8]) -> u32 {
+            let mut crc = 0xffff_ffffu32;
+            for &byte in data {
+                crc ^= byte as u32;
+                for _ in 0..8 {
+                    crc = if crc & 1 != 0 { 0xedb8_8320 ^ (crc >> 1) } else { crc >> 1 };
+                }
+            }
+            !crc
+        }
+        fn chunk(out: &mut Vec<u8>, kind: &[u8], data: &[u8]) {
+            out.extend_from_slice(&(data.len() as u32).to_be_bytes());
+            let mut body = kind.to_vec();
+            body.extend_from_slice(data);
+            out.extend_from_slice(&body);
+            out.extend_from_slice(&crc32(&body).to_be_bytes());
+        }
+        let mut raw = Vec::new();
+        for row in rgba.chunks((width * 4) as usize) {
+            raw.push(0);
+            raw.extend_from_slice(row);
+        }
+        let mut zlib = vec![0x78, 0x01];
+        let blocks: Vec<&[u8]> = raw.chunks(65_535).collect();
+        for (i, block) in blocks.iter().enumerate() {
+            zlib.push(if i + 1 == blocks.len() { 1 } else { 0 });
+            let len = block.len() as u16;
+            zlib.extend_from_slice(&len.to_le_bytes());
+            zlib.extend_from_slice(&(!len).to_le_bytes());
+            zlib.extend_from_slice(block);
+        }
+        let (mut a, mut b) = (1u32, 0u32);
+        for &byte in &raw {
+            a = (a + byte as u32) % 65_521;
+            b = (b + a) % 65_521;
+        }
+        zlib.extend_from_slice(&((b << 16) | a).to_be_bytes());
+        let mut ihdr = Vec::new();
+        ihdr.extend_from_slice(&width.to_be_bytes());
+        ihdr.extend_from_slice(&height.to_be_bytes());
+        ihdr.extend_from_slice(&[8, 6, 0, 0, 0]);
+        let mut png = vec![0x89, b'P', b'N', b'G', 0x0d, 0x0a, 0x1a, 0x0a];
+        chunk(&mut png, b"IHDR", &ihdr);
+        chunk(&mut png, b"IDAT", &zlib);
+        chunk(&mut png, b"IEND", &[]);
+        std::fs::write(path, png).unwrap();
+    }
+
+    /// Renders the recording pill with the shared rasterizer (no window, no
+    /// microphone) for the default look and every skin, on a light desktop
+    /// gray, at 1x and 3x. Output: SPECHY_PILL_SHOTS or %TEMP%\spechy-pillskins.
+    #[test]
+    #[ignore = "Writes PNG previews of the pill skins"]
+    fn pill_skin_previews() {
+        let directory = std::env::var("SPECHY_PILL_SHOTS")
+            .map(std::path::PathBuf::from)
+            .unwrap_or_else(|_| std::env::temp_dir().join("spechy-pillskins"));
+        std::fs::create_dir_all(&directory).unwrap();
+        let state = PillState::Recording { level: 0.75, live_text: String::new() };
+        let mut skins: Vec<Option<&str>> = vec![None];
+        skins.extend(PILL_SKINS.iter().map(|(id, _)| Some(*id)));
+        for skin in skins {
+            set_skin(skin);
+            for scale in [1.0f32, 3.0] {
+                let (sw, sh, radius, row) = shape_metrics(&state, scale, 0.0, 0.0);
+                let (width, height) = window_size_for(sw, sh, scale);
+                let layout = layout_with(sw, sh, radius, row, width, height, scale);
+                let mut pixels = vec![0u8; (width * height * 4) as usize];
+                for px in pixels.chunks_mut(4) {
+                    px.copy_from_slice(&[0xd8, 0xd8, 0xd8, 0xff]);
+                }
+                let mut canvas = Canvas::wrap(width, height, &mut pixels);
+                draw_static(&mut canvas, &state, &layout);
+                draw_dynamic(&mut canvas, &state, &layout, 20);
+                let rgba: Vec<u8> = pixels
+                    .chunks(4)
+                    .flat_map(|p| [p[2], p[1], p[0], p[3]])
+                    .collect();
+                let name = format!("{}_{}x.png", skin.unwrap_or("default"), scale as u32);
+                let path = directory.join(name);
+                write_png(&path, width as u32, height as u32, &rgba);
+                println!("{}", path.display());
+            }
+        }
+        set_skin(None);
     }
 }
 

@@ -142,69 +142,117 @@
   --teal-700: #3f9f90;
 }
 
+/* ------------------------------------------------------------------ premium themes (shop items, premium/engine.ts draws the field)
+   Accents from the mockup's THEMES map; --bg and --skin-panel equal FIELD_BG in engine.ts. */
+:root[data-theme][data-skin="genesis"],
+.th-preview[data-skin="genesis"] {
+  --bg: #0a0806; --surface: #110e0b; --surface-2: #18140f; --surface-3: #221c15;
+  --border: #241e17; --border-strong: #33291f;
+  --text: #efe6d8; --text-2: #b5a893; --text-3: #85786a;
+  --accent: #e0a96d; --accent-soft: #3a2a18;
+  --ink: #efe6d8; --ink-hover: #ffffff; --ink-text: #0a0806; --on-solid: #ffffff; --on-teal: #1a1006;
+  --danger: #f0736f; --success: #e0a96d;
+  --teal-900: #f0c896; --teal-700: #e0a96d; --teal-400: #a87a46; --teal-200: #4a3420; --teal-100: #2a1e12;
+  --field-bg: #15110d; --raised: #120f0b; --menu-bg: #1d1813;
+  --scrim: rgba(0, 0, 0, 0.6); --ring: rgba(239, 230, 216, 0.10); --ring-strong: rgba(239, 230, 216, 0.20);
+  --toggle-off: #33291f; --toggle-knob: #efe6d8; --btn-disabled: #33291f; --btn-disabled-text: #85786a;
+  --shadow-1: 0 1px 2px rgba(0, 0, 0, 0.5); --shadow-2: 0 8px 24px rgba(0, 0, 0, 0.6); --shadow-3: 0 20px 60px rgba(0, 0, 0, 0.7);
+  --skin-panel: #0a0806; --skin-glyph: 239 230 216; --skin-content: transparent;
+}
+:root[data-theme][data-skin="bloom"],
+.th-preview[data-skin="bloom"] {
+  --bg: #090506; --surface: #110a0c; --surface-2: #180f12; --surface-3: #231519;
+  --border: #25171b; --border-strong: #352026;
+  --text: #f3e6e9; --text-2: #b9a2a8; --text-3: #8a747a;
+  --accent: #ff5c7a; --accent-soft: #3d1420;
+  --ink: #f3e6e9; --ink-hover: #ffffff; --ink-text: #090506; --on-solid: #ffffff; --on-teal: #1c0409;
+  --danger: #ff8a6a; --success: #ff8ea2;
+  --teal-900: #ff9aac; --teal-700: #ff5c7a; --teal-400: #b8344f; --teal-200: #4d1a26; --teal-100: #2c0f16;
+  --field-bg: #150c0f; --raised: #120a0d; --menu-bg: #1e1216;
+  --scrim: rgba(0, 0, 0, 0.6); --ring: rgba(243, 230, 233, 0.10); --ring-strong: rgba(243, 230, 233, 0.20);
+  --toggle-off: #352026; --toggle-knob: #f3e6e9; --btn-disabled: #352026; --btn-disabled-text: #8a747a;
+  --shadow-1: 0 1px 2px rgba(0, 0, 0, 0.5); --shadow-2: 0 8px 24px rgba(0, 0, 0, 0.6); --shadow-3: 0 20px 60px rgba(0, 0, 0, 0.7);
+  --skin-panel: #090506; --skin-glyph: 243 230 233; --skin-content: transparent;
+}
+:root[data-theme][data-skin="horizon"],
+.th-preview[data-skin="horizon"] {
+  --bg: #050403; --surface: #0d0b09; --surface-2: #14110d; --surface-3: #1e1913;
+  --border: #201b15; --border-strong: #2f271e;
+  --text: #f1e9de; --text-2: #b4a998; --text-3: #847a6c;
+  --accent: #ffb066; --accent-soft: #3a2410;
+  --ink: #f1e9de; --ink-hover: #ffffff; --ink-text: #050403; --on-solid: #ffffff; --on-teal: #1e1004;
+  --danger: #f0736f; --success: #ffb066;
+  --teal-900: #ffd2a3; --teal-700: #ffb066; --teal-400: #b8743a; --teal-200: #4d3118; --teal-100: #2b1b0d;
+  --field-bg: #12100c; --raised: #0e0c09; --menu-bg: #1a1610;
+  --scrim: rgba(0, 0, 0, 0.6); --ring: rgba(241, 233, 222, 0.10); --ring-strong: rgba(241, 233, 222, 0.20);
+  --toggle-off: #2f271e; --toggle-knob: #f1e9de; --btn-disabled: #2f271e; --btn-disabled-text: #847a6c;
+  --shadow-1: 0 1px 2px rgba(0, 0, 0, 0.5); --shadow-2: 0 8px 24px rgba(0, 0, 0, 0.6); --shadow-3: 0 20px 60px rgba(0, 0, 0, 0.7);
+  --skin-panel: #050403; --skin-glyph: 241 233 222; --skin-content: transparent;
+}
+
 /* ------------------------------------------------------------------ skin rules (tokens only)
-   Backdrop themes make the content panel transparent; ThemeLayer puts the animated field exactly
-   underneath it, so the navigation and title bar stay plain. Fonts never change with a theme. */
-/* No separate panel: the field runs from the navigation's edge to the window edges, under the title bar. */
-:root[data-skin="halftone"] .content,
-:root[data-skin="ascii"] .content { background: transparent; box-shadow: none; border-radius: 0; margin: 0; }
-:root[data-skin="halftone"] .titlebar,
-:root[data-skin="ascii"] .titlebar,
-:root[data-skin="halftone"] .sidebar,
-:root[data-skin="ascii"] .sidebar { background: transparent; }
+   Backdrop themes make the content panel, navigation and title bar transparent; ThemeLayer puts the
+   animated field under the whole window, dimmed behind the navigation so its labels stay readable.
+   Fonts never change with a theme. */
+/* No separate panel: the field runs edge to edge, under the title bar and the navigation. */
+:root:is([data-skin="halftone"], [data-skin="ascii"], [data-skin="genesis"], [data-skin="bloom"], [data-skin="horizon"]) .content { background: transparent; box-shadow: none; border-radius: 0; margin: 0; }
+:root:is([data-skin="halftone"], [data-skin="ascii"], [data-skin="genesis"], [data-skin="bloom"], [data-skin="horizon"]) .titlebar,
+:root:is([data-skin="halftone"], [data-skin="ascii"], [data-skin="genesis"], [data-skin="bloom"], [data-skin="horizon"]) .sidebar { background: transparent; }
 /* Selected and hovered navigation items let the field shimmer through instead of solid blocks. */
-:root[data-skin="halftone"] .nav-item.active,
-:root[data-skin="ascii"] .nav-item.active { background: color-mix(in srgb, var(--surface-3) 78%, transparent); }
-:root[data-skin="halftone"] .nav-item:not(.active):hover,
-:root[data-skin="ascii"] .nav-item:not(.active):hover { background: color-mix(in srgb, var(--surface-2) 70%, transparent); }
+:root:is([data-skin="halftone"], [data-skin="ascii"], [data-skin="genesis"], [data-skin="bloom"], [data-skin="horizon"]) .nav-item.active { background: color-mix(in srgb, var(--surface-3) 78%, transparent); }
+:root:is([data-skin="halftone"], [data-skin="ascii"], [data-skin="genesis"], [data-skin="bloom"], [data-skin="horizon"]) .nav-item:not(.active):hover { background: color-mix(in srgb, var(--surface-2) 70%, transparent); }
+/* Premium themes carry their accent into the navigation and title bar (tokens only, field dimmed there):
+   the selected item sits on the theme's accent-soft surface with an accent icon, the brand mark and
+   the title bar buttons pick up the theme too. Otherwise the near-black premium grounds read as Dark. */
+:root:is([data-skin="genesis"], [data-skin="bloom"], [data-skin="horizon"]) .nav-item.active { background: color-mix(in srgb, var(--accent-soft) 82%, transparent); color: var(--text); }
+:root:is([data-skin="genesis"], [data-skin="bloom"], [data-skin="horizon"]) .nav-item.active svg,
+:root:is([data-skin="genesis"], [data-skin="bloom"], [data-skin="horizon"]) .sidebar .brand svg { color: var(--accent); }
+:root:is([data-skin="genesis"], [data-skin="bloom"], [data-skin="horizon"]) .nav-item { color: var(--text-2); }
+:root:is([data-skin="genesis"], [data-skin="bloom"], [data-skin="horizon"]) .nav-item:not(.active):hover { background: color-mix(in srgb, var(--surface-3) 70%, transparent); color: var(--text); }
+:root:is([data-skin="genesis"], [data-skin="bloom"], [data-skin="horizon"]) .sidebar .brand { color: var(--text); }
+:root:is([data-skin="genesis"], [data-skin="bloom"], [data-skin="horizon"]) .nav-divider { background: var(--border-strong); }
+:root:is([data-skin="genesis"], [data-skin="bloom"], [data-skin="horizon"]) .titlebar .icon-btn { color: var(--text-3); }
+:root:is([data-skin="genesis"], [data-skin="bloom"], [data-skin="horizon"]) .titlebar .icon-btn:not(.win-close):hover { background: color-mix(in srgb, var(--surface-3) 80%, transparent); color: var(--text); }
 /* The field canvas sits between the page ground (body) and the app: the app gets its own layer. */
-:root[data-skin="halftone"] .app,
-:root[data-skin="ascii"] .app { position: relative; z-index: 1; }
+:root:is([data-skin="halftone"], [data-skin="ascii"], [data-skin="genesis"], [data-skin="bloom"], [data-skin="horizon"]) .app { position: relative; z-index: 1; }
 
 /* History on Home over the field: a glass card instead of the solid grey block, so the field
    shimmers through (owner's pick, variant B). Plain themes keep the solid card. */
-:root[data-skin="halftone"] .hist-card,
-:root[data-skin="ascii"] .hist-card {
+:root:is([data-skin="halftone"], [data-skin="ascii"], [data-skin="genesis"], [data-skin="bloom"], [data-skin="horizon"]) .hist-card {
   background: color-mix(in srgb, var(--surface) 40%, transparent);
   border: 1px solid color-mix(in srgb, var(--text) 10%, transparent);
   backdrop-filter: blur(1.5px);
   padding: 6px;
   display: flex; flex-direction: column; gap: 4px;
 }
-:root[data-skin="halftone"] .hist-row,
-:root[data-skin="ascii"] .hist-row { border-bottom: 0; border-radius: calc(var(--radius-lg) - 5px); padding: 14px 16px; }
-:root[data-skin="halftone"] .hist-row + .hist-row::before,
-:root[data-skin="ascii"] .hist-row + .hist-row::before {
+:root:is([data-skin="halftone"], [data-skin="ascii"], [data-skin="genesis"], [data-skin="bloom"], [data-skin="horizon"]) .hist-row { border-bottom: 0; border-radius: calc(var(--radius-lg) - 5px); padding: 14px 16px; }
+:root:is([data-skin="halftone"], [data-skin="ascii"], [data-skin="genesis"], [data-skin="bloom"], [data-skin="horizon"]) .hist-row + .hist-row::before {
   content: ""; position: absolute; left: 16px; right: 16px; top: -2px; height: 1px;
   background: color-mix(in srgb, var(--text) 8%, transparent); transition: opacity 140ms var(--ease);
 }
-:root[data-skin="halftone"] .hist-row:hover,
-:root[data-skin="ascii"] .hist-row:hover { background: color-mix(in srgb, var(--text) 7%, transparent); }
-:root[data-skin="halftone"] .hist-row:hover::before,
-:root[data-skin="ascii"] .hist-row:hover::before,
-:root[data-skin="halftone"] .hist-row:hover + .hist-row::before,
-:root[data-skin="ascii"] .hist-row:hover + .hist-row::before { opacity: 0; }
-:root[data-skin="halftone"] .hist-time,
-:root[data-skin="ascii"] .hist-time { color: var(--text-3); font-variant-numeric: tabular-nums; }
+:root:is([data-skin="halftone"], [data-skin="ascii"], [data-skin="genesis"], [data-skin="bloom"], [data-skin="horizon"]) .hist-row:hover { background: color-mix(in srgb, var(--text) 7%, transparent); }
+:root:is([data-skin="halftone"], [data-skin="ascii"], [data-skin="genesis"], [data-skin="bloom"], [data-skin="horizon"]) .hist-row:hover::before,
+:root:is([data-skin="halftone"], [data-skin="ascii"], [data-skin="genesis"], [data-skin="bloom"], [data-skin="horizon"]) .hist-row:hover + .hist-row::before { opacity: 0; }
+:root:is([data-skin="halftone"], [data-skin="ascii"], [data-skin="genesis"], [data-skin="bloom"], [data-skin="horizon"]) .hist-time { color: var(--text-3); font-variant-numeric: tabular-nums; }
 
-/* Settings over the field: a glass panel that matches the history card, cards inside stay readable. */
-:root[data-skin="halftone"] .set-panel,
-:root[data-skin="ascii"] .set-panel {
-  background: color-mix(in srgb, var(--surface) 62%, transparent);
+/* Settings over the field: one-tone glass panel (variant A); nav is transparent, cards stay readable. */
+:root:is([data-skin="halftone"], [data-skin="ascii"], [data-skin="genesis"], [data-skin="bloom"], [data-skin="horizon"]) .set-panel {
+  background: color-mix(in srgb, var(--bg) 82%, transparent);
   border: 1px solid color-mix(in srgb, var(--text) 10%, transparent);
-  backdrop-filter: blur(22px); -webkit-backdrop-filter: blur(22px);
+  backdrop-filter: blur(28px) saturate(.8); -webkit-backdrop-filter: blur(28px) saturate(.8);
 }
-:root[data-skin="halftone"] .set-nav,
-:root[data-skin="ascii"] .set-nav { background: color-mix(in srgb, var(--bg) 45%, transparent); }
-:root[data-skin="halftone"] .set-panel .card,
-:root[data-skin="ascii"] .set-panel .card {
-  background: color-mix(in srgb, var(--surface-2) 55%, transparent);
-  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--text) 7%, transparent);
+:root:is([data-skin="halftone"], [data-skin="ascii"], [data-skin="genesis"], [data-skin="bloom"], [data-skin="horizon"]) .set-nav {
+  background: transparent;
+  border-right: 1px solid color-mix(in srgb, var(--text) 7%, transparent);
 }
-:root[data-skin="halftone"] .set-nav-item.active,
-:root[data-skin="ascii"] .set-nav-item.active { background: color-mix(in srgb, var(--surface-3) 75%, transparent); }
+:root:is([data-skin="halftone"], [data-skin="ascii"], [data-skin="genesis"], [data-skin="bloom"], [data-skin="horizon"]) .set-panel .card {
+  background: color-mix(in srgb, var(--surface-2) 70%, transparent);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--text) 6%, transparent);
+}
+:root:is([data-skin="halftone"], [data-skin="ascii"], [data-skin="genesis"], [data-skin="bloom"], [data-skin="horizon"]) .set-nav-item:hover { background: color-mix(in srgb, var(--surface-3) 55%, transparent); }
+:root:is([data-skin="halftone"], [data-skin="ascii"], [data-skin="genesis"], [data-skin="bloom"], [data-skin="horizon"]) .set-nav-item.active { background: var(--surface-3); }
 
-/* ------------------------------------------------------------------ field canvas (ThemeLayer), placed over .content */
+/* ------------------------------------------------------------------ field canvas (ThemeLayer), under the whole window */
 .theme-backdrop {
   position: fixed;
   z-index: 0;
@@ -234,6 +282,21 @@
 .th-check { margin-left: auto; color: var(--text); flex: none; }
 .th-line { font-size: 12.5px; color: var(--text-2); margin-top: 2px; line-height: 1.4; }
 .th-hint { font-size: 13px; color: var(--text-3); margin: 16px 4px 0; }
+
+/* premium cards: live canvas instead of the mini window, lock until owned */
+.th-card-canvas { display: block; width: 100%; height: 100%; }
+.th-preview.th-live { padding: 0; display: block; }
+.th-preview.th-live > .th-card-canvas { position: absolute; inset: 0; }
+.th-lock {
+  position: absolute; right: 7px; top: 7px; display: inline-flex; align-items: center; gap: 5px;
+  padding: 3px 8px 3px 7px; border-radius: 999px; font-size: 10.5px; font-weight: 600; letter-spacing: 0.02em;
+  color: var(--text); background: color-mix(in srgb, var(--bg) 72%, transparent);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--text) 14%, transparent);
+  backdrop-filter: blur(6px); -webkit-backdrop-filter: blur(6px);
+}
+.th-card.locked .th-name { color: var(--text-2); }
+.th-get { display: inline-flex; align-items: center; gap: 5px; font-size: 12px; color: var(--text-3); margin-top: 6px; }
+.th-card.locked:hover .th-get { color: var(--text-2); }
 
 /* the mini window inside a preview, drawn from that theme's own tokens */
 .th-preview { display: flex; gap: 5%; padding: 6% 5% 6% 4%; background-color: var(--bg); color: var(--text); overflow: hidden; }

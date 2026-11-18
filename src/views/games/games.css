@@ -5,7 +5,12 @@
 .gm-sub { margin: 6px 0 0; color: var(--text-2); font-size: 14px; }
 
 /* ---------- hub ---------- */
-.gm-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: 20px; }
+/* Always 3 per row; fewer only when the pane itself (container, not the viewport) is narrow.
+   The thresholds sit far below normal widths, so a scrollbar appearing cannot flip the layout. */
+.gm-root { container-type: inline-size; container-name: gm; }
+.gm-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 320px)); gap: 20px; }
+@container gm (max-width: 639px) { .gm-grid { grid-template-columns: repeat(2, minmax(0, 320px)); } }
+@container gm (max-width: 419px) { .gm-grid { grid-template-columns: minmax(0, 1fr); } }
 .gm-card {
   display: flex; flex-direction: column; text-align: left; padding: 10px; gap: 12px;
   background: var(--surface-2); border-radius: var(--radius-lg); border: 1px solid var(--border);
@@ -52,6 +57,10 @@
 .gm-root-play { gap: 18px; }
 .gm-play-head { display: flex; align-items: center; gap: 14px; }
 .gm-back { margin-left: -12px; }
+.gm-head-end { display: flex; align-items: center; gap: 8px; }
+.gm-head-end .gm-best { height: 28px; }
+.btn.gm-sound { width: 28px; height: 28px; min-height: 0; padding: 0; justify-content: center; color: var(--text-3); }
+.btn.gm-sound:hover { color: var(--text); }
 .gm-play-title { flex: 1; margin: 0; font-size: 20px; font-weight: 600; letter-spacing: -0.01em; }
 .gm-stage {
   position: relative; flex: 1; min-height: 420px; border-radius: var(--radius-lg);
@@ -77,16 +86,6 @@
   display: block; image-rendering: pixelated; touch-action: none; user-select: none;
   -webkit-user-select: none; -webkit-tap-highlight-color: transparent;
 }
-
-.gm-vol {
-  position: absolute; left: 14px; bottom: 14px; display: flex; align-items: center; gap: 6px;
-  padding: 4px 12px 4px 4px; border-radius: 999px; background: var(--scrim); color: var(--on-solid);
-  opacity: 0.55; transition: opacity 160ms var(--ease);
-}
-.gm-vol:hover, .gm-vol:focus-within { opacity: 1; }
-.gm-vol-btn { width: 30px; height: 30px; display: flex; align-items: center; justify-content: center; border-radius: 999px; color: inherit; }
-.gm-vol-btn:hover { background: var(--ring-strong); }
-.gm-vol-range { width: 110px; accent-color: var(--accent); cursor: pointer; }
 
 /* ---------- Voice Snake ---------- */
 .vs { position: absolute; inset: 0; display: flex; gap: 20px; padding: 20px; outline: none; }
@@ -163,3 +162,6 @@
   .gm-card, .gm-stage-fade, .vs-line, .vs-count, .vs-last.pulse .vs-last-icon { animation: none; }
   .gm-card:hover, .gm-card:hover .gm-cover { transform: none; }
 }
+
+/* Shop skin "Neon Snake": the board stays dark whatever the theme is (game art). */
+.vs-board.skin-neon { background: #070d0a; }

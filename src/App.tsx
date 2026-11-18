@@ -2,7 +2,9 @@ import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } fro
 import { isTauri } from "@tauri-apps/api/core";
 import { api, events, type DictationState, type InsertText, type Settings, type Toast } from "./lib/ipc";
 import { deliverDictation, trackFocusedField } from "./lib/insertText";
-import { StoreContext, type AppStore, type SettingsPatch } from "./lib/store";
+import { StoreContext, useStore, type AppStore, type SettingsPatch } from "./lib/store";
+import { loadEconomy, useEconomy } from "./lib/economy";
+import { themeById } from "./themes/registry";
 import { defaultSettings, MOCK, safe } from "./lib/fallback";
 import Sidebar from "./components/Sidebar";
 import TitleBar from "./components/TitleBar";
@@ -36,6 +38,19 @@ function useEvent<T>(sub: (cb: (v: T) => void) => Promise<() => void>, cb: (v: T
     return () => { dead = true; un?.(); };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+}
+
+/** A premium theme saved in settings but not owned (say after a developer reset) falls back to
+ *  Dark. Costs nothing for plain themes: the economy is only read while a premium one is saved. */
+function PremiumThemeGuard() {
+  const { settings, update } = useStore();
+  const itemId = themeById(settings.theme)?.itemId;
+  const { state } = useEconomy();
+  useEffect(() => { if (itemId && !state) void loadEconomy().catch(() => {}); }, [itemId, state]);
+  useEffect(() => {
+    if (itemId && state && !state.inventory.some((i) => i.itemId === itemId)) void update({ theme: "dark" });
+  }, [itemId, state, update]);
+  return null;
 }
 
 export default function App() {
@@ -108,6 +123,17 @@ export default function App() {
 
   useTheme(settings.theme);
 
+  // Monday payout on app start (no request unless the player joined the leaderboard). The Games
+  // page flies the coins in later; outside Games the toast tells right away.
+  const payoutChecked = useRef(false);
+  const viewRef = useRef(view);
+  viewRef.current = view;
+  useEffect(() => {
+    if (!settings.onboarded || payoutChecked.current) return;
+    payoutChecked.current = true;
+    void import("./lib/payout").then((m) => m.checkWeeklyPayout(toast, viewRef.current !== "games")).catch(() => {});
+  }, [settings.onboarded, toast]);
+
   useEvent<Settings>(events.onSettingsChanged, receiveSettings);
   useEvent<Toast>(events.onToast, toast);
   useEvent<string>(events.onNavigate, navigate);
@@ -148,6 +174,7 @@ export default function App() {
 
   return (
     <StoreContext.Provider value={store}>
+      <PremiumThemeGuard />
       <ThemeLayer theme={settings.theme} />
       <div className={`app ${MOCK ? "mock" : ""}`}>
         {!settings.onboarded ? (

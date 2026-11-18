@@ -3,13 +3,79 @@
 // the game module loads lazily; Back or Escape returns to the hub. A game added in an update is
 // revealed once when the hub first lists it: veiled card, fanfare, cover dissolving in, a small
 // pop and pixel confetti (no flashes), then a "New" badge until it is played.
-import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
-import { ArrowLeft, Keyboard, Mic, MousePointerClick, Sparkles, Trophy, type LucideIcon } from "lucide-react";
+import { lazy, Suspense, useCallback, useEffect, useLayoutEffect, useRef, useState, type KeyboardEvent as ReactKeyboardEvent } from "react";
+import { ArrowLeft, Gamepad2, Keyboard, Mic, MousePointerClick, Sparkles, Store, Trophy, UserRound, type LucideIcon } from "lucide-react";
 import { useStore } from "../../lib/store";
-import { bestText, GAMES, isNewGame, markPlayed, markRevealed, needsReveal, readAllBests, type GameInfo, type GameModule } from "./catalog";
+import type { GameAward } from "../../lib/ipc";
+import { awardGame, holdBalance, loadEconomy } from "../../lib/economy";
+import { checkWeeklyPayout, onPendingPayout, payoutMessage, takePendingPayouts } from "../../lib/payout";
+import { setThemePreview } from "../../themes/preview";
+import { flyCoins } from "./economy/flyCoins";
+import { bestText, GAMES, isNewGame, markPlayed, markRevealed, needsReveal, readAllBests, type GameInfo, type GameModule, type RoundResult, type SoundControl } from "./catalog";
 import { paintCover } from "./covers";
 import { dissolveIn, playFanfare } from "./reveal";
+import { CoinChip } from "./economy/Coin";
+import ResultsCard from "./economy/ResultsCard";
+import { configureSfx } from "./economy/sfx";
+import SoundMenu from "./SoundMenu";
+import GameTitle from "./GameTitle";
 import "./games.css";
+import "./economy/economy.css";
+
+const Leaderboard = lazy(() => import("./leaderboard/Leaderboard"));
+const Shop = lazy(() => import("./shop/Shop"));
+const Profile = lazy(() => import("./profile/Profile"));
+
+/** Top navigation inside Games. Coins, shop and leaderboard live only here. */
+type Tab = "play" | "leaderboard" | "shop" | "profile";
+const TABS: { id: Tab; label: string; icon: LucideIcon }[] = [
+  { id: "play", label: "Play", icon: Gamepad2 },
+  { id: "leaderboard", label: "Leaderboard", icon: Trophy },
+  { id: "shop", label: "Shop", icon: Store },
+  { id: "profile", label: "Profile", icon: UserRound },
+];
+
+function GamesNav({ tab, onTab }: { tab: Tab; onTab: (t: Tab) => void }) {
+  // Hover is tracked per tab in script: a CSS :hover can stay stuck on a tab the pointer left
+  // while the layout changed under it (tab switch), so only the pointer events decide.
+  const [hot, setHot] = useState<Tab | null>(null);
+  const onKey = (e: ReactKeyboardEvent<HTMLDivElement>) => {
+    if (e.key !== "ArrowRight" && e.key !== "ArrowLeft") return;
+    e.preventDefault();
+    const i = TABS.findIndex((t) => t.id === tab);
+    const next = TABS[(i + (e.key === "ArrowRight" ? 1 : TABS.length - 1)) % TABS.length];
+    onTab(next.id);
+    (e.currentTarget.querySelector(`[data-tab="${next.id}"]`) as HTMLElement | null)?.focus();
+  };
+  return (
+    <div className="g-tabs" role="tablist" aria-label="Games" onKeyDown={onKey} onPointerLeave={() => setHot(null)}>
+      {TABS.map(({ id, label, icon: Icon }) => (
+        <button
+          key={id}
+          type="button"
+          role="tab"
+          data-tab={id}
+          aria-selected={tab === id}
+          tabIndex={tab === id ? 0 : -1}
+          className={`g-tab ${tab === id ? "on" : ""} ${hot === id ? "hot" : ""}`}
+          onPointerEnter={(e) => setHot(e.pointerType === "mouse" ? id : null)}
+          onPointerLeave={() => setHot((h) => (h === id ? null : h))}
+          onPointerCancel={() => setHot(null)}
+          onMouseDown={(e) => e.preventDefault()} // a click must not leave :focus on the tab
+          onClick={() => onTab(id)}
+        >
+          <Icon size={17} strokeWidth={2} aria-hidden="true" />
+          {label}
+        </button>
+      ))}
+    </div>
+  );
+}
+
+/** Space and Enter on the results card must not reach the game listeners (Voice Snake listens on window). */
+function stopGameKeys(e: ReactKeyboardEvent) {
+  if (e.key === " " || e.key === "Enter") e.stopPropagation();
+}
 
 interface Box { x: number; y: number; w: number; h: number }
 type Mode = { kind: "hub" } | { kind: "play"; id: GameInfo["id"]; from: Box | null };
@@ -149,8 +215,19 @@ function EnterOverlay({ id, from, stage, loaded, onDone }: {
   );
 }
 
+/** Fly the Monday payout from the payout card (Leaderboard tab) or the page title into the chip. */
+function landPayouts(toast: ReturnType<typeof useStore>["toast"]) {
+  const list = takePendingPayouts();
+  if (list.length === 0) return;
+  const total = list.reduce((n, p) => n + p.coins, 0);
+  for (const p of list) if (!p.toasted) toast({ kind: "success", message: payoutMessage(p) });
+  const from = document.querySelector(".rk-pay") ?? document.querySelector(".gm-root .page-title");
+  if (!from) { holdBalance(null); return; }
+  void flyCoins(from.getBoundingClientRect(), total, 12).done.then(() => holdBalance(null));
+}
+
 export default function Games() {
-  const { settings } = useStore();
+  const { settings, toast } = useStore();
   const [mode, setMode] = useState<Mode>({ kind: "hub" });
   // Games still waiting for their reveal (taken once when the hub opens), and the one revealing now.
   const [veiled, setVeiled] = useState<string[]>(() => GAMES.filter((g) => needsReveal(g.id)).map((g) => g.id));
@@ -163,6 +240,15 @@ export default function Games() {
   const [best, setBest] = useState<Record<string, number>>(readAllBests);
   /** The record the play header shows; null shows all records of the game. */
   const [headerKey, setHeaderKey] = useState<string | null>(null);
+  /** Sound toggle published by the open game; null when it has none. */
+  const [sound, setSound] = useState<SoundControl | null>(null);
+  /** The last sound state the open game published; the reward sounds follow it. */
+  const soundRef = useRef<SoundControl | null>(null);
+  const [tab, setTab] = useState<Tab>("play");
+  /** Results card of the last round; over the stage while playing, floating over the hub after leaving. */
+  const [result, setResult] = useState<{ award: GameAward; best: number } | null>(null);
+  const settingsRef = useRef(settings);
+  settingsRef.current = settings;
   const rootRef = useRef<HTMLElement>(null);
   const stageRef = useRef<HTMLDivElement>(null);
   const coverRefs = useRef<Record<string, HTMLDivElement | null>>({});
@@ -178,6 +264,9 @@ export default function Games() {
     setMod(null);
     setLoadError(false);
     setHeaderKey(null);
+    setSound(null);
+    soundRef.current = null;
+    setResult(null);
     setOverlay(!!from);
     setMode({ kind: "play", id: game.id, from });
     game.load().then((m) => setMod(() => m), () => setLoadError(true));
@@ -185,9 +274,59 @@ export default function Games() {
 
   const back = useCallback(() => {
     setMode({ kind: "hub" });
+    setSound(null);
     setMod(null);
     setOverlay(false);
     setBest(readAllBests());
+  }, []);
+
+  const publishSound = useCallback((c: SoundControl | null) => {
+    setSound(c);
+    if (c) soundRef.current = c;
+  }, []);
+
+  useEffect(() => { void loadEconomy().catch(() => {}); }, []);
+
+  // Monday payout: checked on every visit (one request a week at most, none before joining).
+  // Coins fly in once the hub is on screen; payouts found at app start wait here.
+  const hubShown = mode.kind === "hub";
+  useEffect(() => { void checkWeeklyPayout(toast, false); }, [toast]);
+  useEffect(() => {
+    if (!hubShown) return;
+    let t = window.setTimeout(() => landPayouts(toast), 350);
+    const off = onPendingPayout(() => { window.clearTimeout(t); t = window.setTimeout(() => landPayouts(toast), 350); });
+    return () => { off(); window.clearTimeout(t); };
+  }, [hubShown, toast]);
+
+  // A theme preview from the shop ends with the Shop tab and with the Games page.
+  useEffect(() => { if (tab !== "shop") setThemePreview(null); }, [tab]);
+  useEffect(() => () => setThemePreview(null), []);
+
+  // A round ended or was left: award coins and RP, then show the results card. Runs also
+  // while the game unmounts (leaving mid round), so it reads everything through refs.
+  const onRoundEnd = useCallback((r: RoundResult) => {
+    const game = GAMES.find((g) => g.id === lastId.current);
+    if (!game) return;
+    const snd = soundRef.current;
+    configureSfx(settingsRef.current.sounds !== false && (snd ? snd.on : true), snd?.volume ?? 0.8);
+    awardGame(game.id, r.score, r.newBest, r.quit).then(
+      (award) => {
+        const bests = readAllBests();
+        const best = Math.max(r.score, ...game.bests.map((b) => bests[b.key] ?? 0));
+        setResult({ award, best });
+      },
+      () => { /* no backend: the round still counts for the records */ },
+    );
+  }, []);
+
+  const playAgain = useCallback(() => {
+    setResult(null);
+    const stage = stageRef.current;
+    if (!stage) return;
+    // Same as pressing Space in the game: tower, comet and snake all restart from game over.
+    const panel = (stage.querySelector('[tabindex="0"]') as HTMLElement | null) ?? stage;
+    panel.focus({ preventScroll: true });
+    panel.dispatchEvent(new KeyboardEvent("keydown", { code: "Space", key: " ", bubbles: true }));
   }, []);
 
   // Escape leaves a game, unless a dialog (Settings) is open on top.
@@ -215,9 +354,12 @@ export default function Games() {
     if (slot) setBest((b) => ({ ...b, [slot]: Math.max(b[slot] ?? 0, value) }));
   }, []);
 
-  // Reveal veiled games one after another while the hub is shown.
+  // A reveal needs its card on screen: switching to another tab mid reveal starts it over later.
+  useEffect(() => { if (tab !== "play") setRevealing(null); }, [tab]);
+
+  // Reveal veiled games one after another while the hub (Play tab) is shown.
   useEffect(() => {
-    if (mode.kind !== "hub" || revealing || veiled.length === 0) return;
+    if (mode.kind !== "hub" || tab !== "play" || revealing || veiled.length === 0) return;
     const id = veiled[0];
     if (prefersReducedMotion()) {
       markRevealed(id);
@@ -229,7 +371,7 @@ export default function Games() {
       if (settings.sounds !== false) playFanfare();
     }, REVEAL_DELAY_MS);
     return () => window.clearTimeout(t);
-  }, [mode.kind, revealing, veiled, settings.sounds]);
+  }, [mode.kind, tab, revealing, veiled, settings.sounds]);
 
   const finishReveal = useCallback((id: string) => {
     markRevealed(id);
@@ -256,8 +398,13 @@ export default function Games() {
             <ArrowLeft size={16} aria-hidden="true" />
             Games
           </button>
-          <h1 className="gm-play-title">{game.title}</h1>
-          <BestLabel text={bestText(game, best, headerKey)} />
+          <h1 className="gm-play-title"><GameTitle game={game.id} size="header" /></h1>
+          <div className="gm-head-end">
+            <BestLabel text={bestText(game, best, headerKey)} />
+            {sound && <SoundMenu control={sound} />}
+            <span className="gm-head-sep" aria-hidden="true" />
+            <CoinChip />
+          </div>
         </header>
         <div ref={stageRef} className={`gm-stage ${overlay ? "" : "gm-stage-fade"}`}>
           {loadError ? (
@@ -265,7 +412,17 @@ export default function Games() {
               <p>This game could not be loaded.</p>
               <button className="btn btn-secondary btn-sm" onClick={() => open(game)}>Try again</button>
             </div>
-          ) : Game ? <Game onBest={onBest} onBestKey={setHeaderKey} /> : null}
+          ) : Game ? <Game onBest={onBest} onBestKey={setHeaderKey} onSound={publishSound} onRoundEnd={onRoundEnd} /> : null}
+          {result && (
+            <div className="sr-layer" onKeyDown={stopGameKeys}>
+              <ResultsCard
+                award={result.award}
+                best={result.best}
+                onBack={() => { setResult(null); back(); }}
+                onAgain={playAgain}
+              />
+            </div>
+          )}
         </div>
         {overlay && mode.from && stageRef.current && (
           <EnterOverlay
@@ -287,8 +444,32 @@ export default function Games() {
           <h1 className="page-title">Games</h1>
           <p className="gm-sub">Small breaks between dictations.</p>
         </div>
+        <CoinChip onClick={() => { setTab("shop"); setResult(null); }} />
       </div>
-      <div className="gm-grid">
+      <GamesNav tab={tab} onTab={(t) => { setTab(t); setResult(null); }} />
+      {result && (
+        <div className="sr-float-layer" onKeyDown={stopGameKeys}>
+          <ResultsCard
+            award={result.award}
+            best={result.best}
+            floating
+            onBack={() => setResult(null)}
+            onAgain={() => {
+              const g = GAMES.find((x) => x.id === result.award.game);
+              setResult(null);
+              if (g) open(g);
+            }}
+          />
+        </div>
+      )}
+      {tab !== "play" && (
+        <Suspense fallback={null}>
+          {tab === "leaderboard" && <Leaderboard />}
+          {tab === "shop" && <Shop />}
+          {tab === "profile" && <Profile />}
+        </Suspense>
+      )}
+      {tab === "play" && <div className="gm-grid">
         {GAMES.map((game, i) => {
           const Icon = CONTROL_ICON[game.id] ?? Keyboard;
           const hidden = veiled.includes(game.id);
@@ -313,7 +494,7 @@ export default function Games() {
                 {showNew && <span className="gm-new">New</span>}
               </div>
               <div className="gm-card-body">
-                <span className="gm-card-title">{hidden ? "New game" : game.title}</span>
+                <span className="gm-card-title">{hidden ? "New game" : <GameTitle game={game.id} size="card" />}</span>
                 <span className="gm-card-line">{hidden ? "Something new just arrived." : game.tagline}</span>
                 <span className="gm-card-meta">
                   <BestLabel text={bestText(game, best)} />
@@ -326,7 +507,7 @@ export default function Games() {
             </button>
           );
         })}
-      </div>
+      </div>}
     </section>
   );
 }

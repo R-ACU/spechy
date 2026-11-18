@@ -1,5 +1,5 @@
-// Animated background field for the backdrop themes, drawn only inside the content panel
-// (ThemeLayer sizes and places the canvas over `.content`; the navigation stays plain).
+// Animated background field for the backdrop themes, drawn under the whole window (ThemeLayer);
+// behind the transparent navigation (left of `data-calm`) the field is dimmed.
 // Two looks from the owner's references:
 //  - "glyph": a strict monospace grid of faint ASCII glyphs forming soft diagonal contour bands
 //    that drift and bend, like the chat screen in the Nova post.
