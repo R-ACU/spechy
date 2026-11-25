@@ -131,7 +131,7 @@ pub fn install() -> Result<(), String> {
     Ok(())
 }
 
-pub const RELEASES_URL: &str = "https://github.com/R-ACU/spechy-releases/releases/latest";
+pub const RELEASES_URL: &str = "https://github.com/R-ACU/spechy/releases/latest";
 
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -173,7 +173,7 @@ pub fn check(current: &str) -> Result<UpdateInfo, String> {
 
 #[cfg(windows)]
 fn check_windows(current: &str) -> Result<UpdateInfo, String> {
-    let release: Release = ureq::get("https://api.github.com/repos/R-ACU/spechy-releases/releases/latest")
+    let release: Release = ureq::get("https://api.github.com/repos/R-ACU/spechy/releases/latest")
         .set("User-Agent", "Spechy")
         .set("Accept", "application/vnd.github+json")
         .timeout(std::time::Duration::from_secs(15))
@@ -181,7 +181,7 @@ fn check_windows(current: &str) -> Result<UpdateInfo, String> {
         .into_json().map_err(|_| "GitHub returned an invalid release response.")?;
     let asset = release.assets.iter().find(|asset| asset.name == "Spechy-Setup.exe")
         .ok_or("This release has no Windows installer yet.")?;
-    if !asset.browser_download_url.starts_with("https://github.com/R-ACU/spechy-releases/releases/download/") {
+    if !asset.browser_download_url.starts_with("https://github.com/R-ACU/spechy/releases/download/") {
         return Err("The release download address is invalid.".into());
     }
     Ok(UpdateInfo {

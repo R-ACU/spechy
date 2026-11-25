@@ -5,14 +5,14 @@
 <p align="center"><strong>Speak naturally. Keep your flow.</strong><br>Open-source voice dictation for Windows, with your choice of AI.</p>
 
 <p align="center">
-  <a href="https://github.com/R-ACU/spechy-releases/releases/latest"><img alt="Latest release" src="https://img.shields.io/github/v/release/R-ACU/spechy-releases?style=flat-square&color=8b6bd9"></a>
+  <a href="https://github.com/R-ACU/spechy/releases/latest"><img alt="Latest release" src="https://img.shields.io/github/v/release/R-ACU/spechy?style=flat-square&color=8b6bd9"></a>
   <a href="https://github.com/R-ACU/spechy/actions/workflows/build.yml"><img alt="Windows checks" src="https://github.com/R-ACU/spechy/actions/workflows/build.yml/badge.svg"></a>
   <a href="LICENSE"><img alt="Code license: MIT" src="https://img.shields.io/badge/code-MIT-292824?style=flat-square"></a>
   <img alt="Windows 10 and 11, x64" src="https://img.shields.io/badge/Windows-10%20%2F%2011%20%C2%B7%20x64-292824?style=flat-square">
 </p>
 
 <p align="center">
-  <a href="https://github.com/R-ACU/spechy-releases/releases/latest/download/Spechy-Setup.exe"><strong>Download for Windows</strong></a>
+  <a href="https://github.com/R-ACU/spechy/releases/latest/download/Spechy-Setup.exe"><strong>Download for Windows</strong></a>
   &nbsp;&nbsp;/&nbsp;&nbsp;
   <a href="#get-started">Get started</a>
   &nbsp;&nbsp;/&nbsp;&nbsp;
@@ -46,7 +46,7 @@ Use it for emails, documents, chat messages, code explanations and prompts. Keep
 
 ## Get started
 
-1. **Install.** Download [Spechy-Setup.exe](https://github.com/R-ACU/spechy-releases/releases/latest/download/Spechy-Setup.exe) and run it on Windows 10 or 11, x64.
+1. **Install.** Download [Spechy-Setup.exe](https://github.com/R-ACU/spechy/releases/latest/download/Spechy-Setup.exe) and run it on Windows 10 or 11, x64.
 2. **Connect a provider.** Add your own Groq or OpenRouter key in onboarding, or configure a custom server. Choose a microphone and test your setup.
 3. **Speak.** Focus a text field, hold **Ctrl + Win**, speak, then release.
 
@@ -110,7 +110,7 @@ Cloud transcription sends audio to the selected provider; cloud cleanup sends te
 
 The notification bell shows a **1** when a new update is available, with one brief animation and no sound. Click the bell, then the update notification to open **Help > Updates**, and choose **Update now**. Spechy downloads and verifies the update inside the app, installs it in the background, and restarts automatically. Your settings and history are retained. Versions before 0.1.2 need one manual installer download to gain in-app downloads; one-click background installation is available from 0.1.3.
 
-**Updates start only when you choose Update now.** The [permanent download link](https://github.com/R-ACU/spechy-releases/releases/latest/download/Spechy-Setup.exe) always points to the latest published installer, so it can also be used on a website.
+**Updates start only when you choose Update now.** The [permanent download link](https://github.com/R-ACU/spechy/releases/latest/download/Spechy-Setup.exe) always points to the latest published installer, so it can also be used on a website.
 
 ## Build it yourself
 
