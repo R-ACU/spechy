@@ -21,7 +21,7 @@
   <a href="https://github.com/R-ACU/spechy/issues">Report an issue</a>
 </p>
 
-![Spechy in dark mode, showing dictation history and word stats](assets/readme/home.png)
+![Spechy in the ASCII theme, showing dictation history and word stats](assets/readme/home.png)
 
 <p align="center"><sub>Real Spechy interface. Screenshots use demonstration data.</sub></p>
 
