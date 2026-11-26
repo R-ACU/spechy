@@ -458,6 +458,7 @@ textarea.input { height: auto; padding: 10px 12px; resize: vertical; line-height
 .pair-arrow { color: var(--text-2); flex: none; }
 .faint-strong { color: var(--text-2); }
 .snippet-text { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.snippet-builtin-icon { flex: none; color: var(--text-3); }
 .learned { color: var(--warn); flex: none; }
 .row-actions { display: flex; align-items: center; gap: 2px; flex: none; opacity: 0; transition: opacity 140ms var(--ease); }
 .list-row:hover .row-actions, .row-actions:focus-within { opacity: 1; }
@@ -501,7 +502,8 @@ textarea.input { height: auto; padding: 10px 12px; resize: vertical; line-height
 .onb-body { margin: 0; color: var(--text-2); font-size: 14.5px; max-width: 52ch; }
 .onb-lead { font-size: 16px; }
 .onb-wordmark { display: inline-flex; align-items: center; gap: 12px; font-family: var(--font-serif); font-size: 34px; font-weight: 700; letter-spacing: -0.03em; }
-.onb-wordmark svg { color: var(--accent); }
+/* Same white mark as the app icon, never the theme accent. */
+.onb-wordmark svg { color: var(--text); }
 
 .onb-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 12px; }
 .onb-list li { display: flex; align-items: flex-start; gap: 11px; color: var(--text-2); }
@@ -520,8 +522,34 @@ textarea.input { height: auto; padding: 10px 12px; resize: vertical; line-height
 .onb-key .set-secret, .onb-key .input { flex: 1; min-width: 0; }
 .onb-key .btn { flex: none; }
 .onb-quote { display: inline-block; white-space: nowrap; margin: 0 4px; padding: 1px 6px; border-radius: 5px; background: var(--surface-3); font-weight: 500; color: var(--text); }
-.onb-textarea { height: 112px; padding: 12px; resize: none; line-height: 1.55; }
 .onb-sub-exercise { padding-top: 20px; border-top: 1px solid var(--border); }
+
+/* Practice step: chord and live status above a small email compose box. */
+.onb-try { display: flex; flex-direction: column; gap: 10px; }
+.onb-try-bar { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.onb-try-hold { display: inline-flex; align-items: center; gap: 10px; font-size: 13.5px; font-weight: 600; }
+.onb-try-say { margin: 0; color: var(--text-2); font-size: 14px; line-height: 1.5; }
+.onb-live { display: inline-flex; align-items: center; gap: 7px; height: 26px; padding: 0 11px; border-radius: 999px; background: var(--surface-3); color: var(--text-3); font-size: 12px; font-weight: 600; transition: color 160ms var(--ease); }
+.onb-live-dot { width: 6px; height: 6px; border-radius: 999px; background: currentColor; }
+.onb-live.listening, .onb-live.writing { color: var(--text); }
+.onb-live.writing .onb-live-dot { animation: onb-pulse 900ms var(--ease) infinite alternate; }
+.onb-live.done { color: var(--success); }
+.onb-live-bars { display: inline-flex; align-items: center; gap: 2px; height: 12px; }
+.onb-live-bars span { width: 2px; height: 12px; border-radius: 2px; background: currentColor; transform-origin: center; transition: transform 90ms linear; }
+@keyframes onb-pulse { from { opacity: 1; } to { opacity: .3; } }
+@media (prefers-reduced-motion: reduce) { .onb-live.writing .onb-live-dot { animation: none; } .onb-live-bars span { transition: none; } }
+.onb-mail { display: flex; flex-direction: column; border-radius: var(--radius); border: 1px solid var(--border-strong); background: var(--field-bg); cursor: text; transition: border-color 140ms var(--ease); }
+.onb-mail:focus-within { border-color: var(--text-3); }
+.onb-mail-head { display: flex; gap: 10px; padding: 10px 14px; border-bottom: 1px solid var(--border); font-size: 13px; }
+.onb-mail-body { height: 92px; padding: 12px 14px; border: 0; outline: none; resize: none; background: transparent; color: var(--text); font: inherit; font-size: 14px; line-height: 1.55; }
+.onb-mail-body::placeholder { color: var(--text-3); }
+
+/* Key caps for every chord in the onboarding. */
+.onb-chord .kbd { height: 26px; min-width: 26px; justify-content: center; padding: 0 8px; border-radius: 7px; background: var(--surface-2); font-size: 12.5px; box-shadow: 0 2px 0 var(--border-strong); }
+/* Held keys light up and sink onto their base (the shadow is the key's height). */
+.onb-chord.live .kbd { transition: transform 70ms var(--ease), box-shadow 70ms var(--ease), background 90ms var(--ease), color 90ms var(--ease), border-color 90ms var(--ease); }
+.onb-chord .kbd.pressed { background: var(--text); border-color: var(--text); color: var(--bg); transform: translateY(2px); box-shadow: 0 0 0 var(--border-strong); }
+@media (prefers-reduced-motion: reduce) { .onb-chord .kbd.pressed { transform: none; } }
 
 .onb-meter { height: 10px; border-radius: 999px; background: var(--surface-3); overflow: hidden; }
 .onb-meter-fill { height: 100%; border-radius: 999px; background: var(--accent); transition: width 80ms linear; }

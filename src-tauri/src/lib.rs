@@ -39,6 +39,11 @@ pub fn run() {
     let start_minimized = std::env::args().any(|a| a == "--minimized");
 
     tauri::Builder::default()
+        // Without this, keyboard hooks die while a Spechy window has focus: tao registers
+        // for raw input as long as one of its windows is focused, and Windows then stops
+        // calling this process's low-level keyboard hook and every hook behind it in the
+        // chain (our own chords, SnipDrop's Win+Shift+S). Spechy uses no device events.
+        .device_event_filter(tauri::DeviceEventFilter::Always)
         .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
             tray::show_main_window(app);
         }))
@@ -141,6 +146,8 @@ pub fn run() {
                     // Destroy instead of hide: a living WebView2 costs hundreds of megabytes.
                     let _ = window.destroy();
                 }
+            } else {
+                tray::reveal_fallback(app.handle());
             }
             Ok(())
         })

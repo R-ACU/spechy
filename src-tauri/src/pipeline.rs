@@ -231,6 +231,18 @@ pub fn state() -> DictationState {
     lock().public.clone()
 }
 
+/// Whether a dictation is still running, so installing an update (which restarts the app)
+/// would lose it. Error counts as idle: after a failed dictation the phase stays Error until
+/// the next one starts, although nothing runs any more.
+pub fn dictation_running() -> bool {
+    let s = lock();
+    phase_is_busy(s.public.phase) || s.recorder.is_some()
+}
+
+fn phase_is_busy(phase: Phase) -> bool {
+    !matches!(phase, Phase::Idle | Phase::Error)
+}
+
 fn set_phase(phase: Phase, message: &str) {
     let snapshot = {
         let mut s = lock();
@@ -775,7 +787,7 @@ fn strip_artifacts(text: &str, suspicious: bool) -> String {
         return String::new();
     }
     if !suspicious {
-        return t.to_string();
+        return strip_trailing_watermark(t);
     }
     // Drop the trailing run of link tokens, the usual shape of a watermark a
     // quiet tail produces.
@@ -785,6 +797,48 @@ fn strip_artifacts(text: &str, suspicious: bool) -> String {
         end -= 1;
     }
     tokens[..end].join(" ").trim().to_string()
+}
+
+/// Domains Whisper is known to append as a subtitle watermark; dropped at the end of any part.
+const WATERMARK_DOMAINS: &[&str] = &["feyyaz.tv"];
+
+/// The end of a part, even one full of speech, is where Whisper appends a made-up link
+/// (history: "... anhalten. www.hermes.de", "... Perspektive. www.feyyaz.tv"). A last token
+/// that is a "www." link standing as its own sentence (after . ? ! or ,) or a known
+/// watermark domain is dropped. A link said inside a sentence ("geh auf www.x.de") stays.
+fn strip_trailing_watermark(text: &str) -> String {
+    let tokens: Vec<&str> = text.split_whitespace().collect();
+    let Some((last, rest)) = tokens.split_last() else { return String::new() };
+    let bare = last.trim_matches(|c: char| c.is_ascii_punctuation()).to_lowercase();
+    let known = WATERMARK_DOMAINS.iter().any(|d| bare == *d || bare.ends_with(&format!(".{d}")));
+    let own_sentence = bare.starts_with("www.")
+        && is_urlish(last)
+        && rest.last().is_some_and(|prev| prev.ends_with(['.', '?', '!', ',']));
+    // The link comes last, a made-up sign-off right before it.
+    strip_trailing_sign_off(&if known || own_sentence { rest.join(" ") } else { text.to_string() })
+}
+
+/// Sign-offs Whisper tacks onto the end of a recording (history: "... einfach. Vielen Dank."
+/// and whole 0.4 s dictations of just "Vielen Dank."). Remo's call: such a last sentence is
+/// always removed, even though a real one at the end of an email goes with it. Longer
+/// thanks ("Vielen Dank für deine Hilfe") and a plain "Danke" stay.
+const SIGN_OFFS: &[&str] = &["vielen dank", "thank you", "thank you very much", "thank you so much"];
+
+fn strip_trailing_sign_off(text: &str) -> String {
+    let t = text.trim();
+    // Start of the last sentence: right after the last . ? ! that is followed by a space.
+    let start = t
+        .char_indices()
+        .filter(|&(i, c)| matches!(c, '.' | '?' | '!') && t[i + c.len_utf8()..].starts_with(' '))
+        .map(|(i, c)| i + c.len_utf8())
+        .last()
+        .unwrap_or(0);
+    let last = t[start..].trim().trim_end_matches(['.', '!']).trim().to_lowercase();
+    if SIGN_OFFS.contains(&last.as_str()) {
+        t[..start].trim().to_string()
+    } else {
+        t.to_string()
+    }
 }
 
 // ---------- Cancel ----------
@@ -1109,6 +1163,18 @@ fn deliver(raw: &str, settings: &crate::model::Settings, delivery: Delivery) -> 
     if is_cancelled(delivery.generation) {
         return Ok(());
     }
+
+    // The spoken clipboard phrase becomes the clipboard text (read now, before Spechy
+    // touches the clipboard for pasting). Command mode works on a selection and skips it.
+    let text = if command {
+        text
+    } else {
+        let (text, clip) = crate::polish::insert_clipboard(&text, &settings.clipboard_phrase, crate::paste::get_clipboard_text);
+        if clip == crate::polish::ClipboardUse::Empty {
+            toast("info", "Your clipboard has no text to insert.");
+        }
+        text
+    };
     if text.trim().is_empty() {
         back_to_idle(delivery.generation);
         return Ok(());
@@ -1295,6 +1361,39 @@ fn is_vibe_app(settings: &crate::model::Settings, process_name: &str) -> bool {
 mod tests {
     use super::*;
     use std::io::{Read, Write};
+
+    #[test]
+    fn trailing_watermark_links_are_dropped_from_real_speech() {
+        // Cases from the dictation history.
+        assert_eq!(strip_artifacts("den Agent kurz anhalten. www.hermes.de", false), "den Agent kurz anhalten.");
+        assert_eq!(strip_artifacts("Ist es auch IMDb? www.feyyaz.tv", false), "Ist es auch IMDb?");
+        assert_eq!(strip_artifacts("und dann sieht man das direkt www.feyyaz.tv", false), "und dann sieht man das direkt");
+        // A link said inside a sentence stays, also at the end.
+        assert_eq!(strip_artifacts("geh mal auf www.example.de", false), "geh mal auf www.example.de");
+        assert_eq!(strip_artifacts("www.example.de ist die Seite.", false), "www.example.de ist die Seite.");
+    }
+
+    #[test]
+    fn a_trailing_vielen_dank_is_dropped() {
+        assert_eq!(strip_artifacts("Das ist hier alles grad schlecht einfach. Vielen Dank.", false), "Das ist hier alles grad schlecht einfach.");
+        assert_eq!(strip_artifacts("Vielen Dank.", false), "");
+        assert_eq!(strip_artifacts("Is that clear? Thank you!", false), "Is that clear?");
+        // Longer thanks, a plain Danke and thanks mid-text stay.
+        assert_eq!(strip_artifacts("Vielen Dank für deine Hilfe.", false), "Vielen Dank für deine Hilfe.");
+        assert_eq!(strip_artifacts("Super, danke.", false), "Super, danke.");
+        assert_eq!(strip_artifacts("Vielen Dank. Dann bis morgen.", false), "Vielen Dank. Dann bis morgen.");
+        // Both artifacts at once.
+        assert_eq!(strip_artifacts("Bis dann. Vielen Dank. www.feyyaz.tv", false), "Bis dann.");
+    }
+
+    #[test]
+    fn failed_dictation_does_not_block_update() {
+        assert!(!phase_is_busy(Phase::Idle));
+        assert!(!phase_is_busy(Phase::Error), "a failed dictation leaves Error behind, nothing runs");
+        assert!(phase_is_busy(Phase::Recording));
+        assert!(phase_is_busy(Phase::Transcribing));
+        assert!(phase_is_busy(Phase::Polishing));
+    }
 
     fn custom_settings(base_url: &str) -> crate::model::Settings {
         let mut settings = crate::model::Settings::default();

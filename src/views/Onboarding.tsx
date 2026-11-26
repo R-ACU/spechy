@@ -19,6 +19,7 @@ import {
 } from "lucide-react";
 import { api, events, type DictationState, type HistoryEntry, type MicDevice } from "../lib/ipc";
 import { useStore } from "../lib/store";
+import { setFallbackField } from "../lib/insertText";
 import { MOCK, mockMicrophones, safe } from "../lib/fallback";
 import { Button, Dialog, Kbd, Listbox, Toggle } from "../components/ui";
 import { ChordRecorder, SecretInput } from "./settings/parts";
@@ -27,28 +28,89 @@ const STEPS = ["welcome", "keys", "microphone", "hotkey", "practice", "dictionar
 type StepId = (typeof STEPS)[number];
 
 const SUGGESTED_WORDS = ["Spechy", "TypeScript", "GitHub"];
-const PRACTICE_HINT = `Hold Ctrl + ${keyLabel("Win")} and say: Hi Anna, thanks for the update, I will send the files tomorrow.`;
+const PRACTICE_LINE = "Hi Anna, thanks for the update, I will send the files tomorrow.";
 
-/** Renders "Ctrl+Win+Space" as separate key caps. */
-function Chord({ chord }: { chord: string }) {
+/** Live dictation status for the practice step: ready, listening (with level), writing, inserted. */
+function PracticeStatus({ phase, level, inserted }: { phase: DictationState["phase"]; level: number; inserted: boolean }) {
+  if (phase === "recording") {
+    const bars = [0.55, 1, 0.75, 0.9, 0.6];
+    return (
+      <span className="onb-live listening">
+        <span className="onb-live-bars" aria-hidden="true">
+          {bars.map((w, i) => <span key={i} style={{ transform: `scaleY(${Math.max(0.18, Math.min(1, level * 9 * w))})` }} />)}
+        </span>
+        Listening
+      </span>
+    );
+  }
+  if (phase === "transcribing" || phase === "polishing") return <span className="onb-live writing"><span className="onb-live-dot" />Writing</span>;
+  if (inserted) return <span className="onb-live done"><Check size={13} />Inserted</span>;
+  return <span className="onb-live"><span className="onb-live-dot" />Ready</span>;
+}
+
+/** One name per physical key, for chord parts ("Win", "Ctrl") and DOM key events ("Meta", "Control") alike. */
+function keyId(name: string): string {
+  const k = name.trim().toLowerCase();
+  if (k === "control" || k === "ctrl") return "ctrl";
+  if (k === "meta" || k === "os" || k === "win" || k === "super" || k === "cmd" || k === "command") return "win";
+  if (k === " " || k === "space" || k === "spacebar") return "space";
+  if (k === "altgraph") return "alt";
+  return k;
+}
+
+/** Keys held right now while this window has the focus. Cleared when the window loses it,
+ *  since key-ups can go elsewhere (the Win key in particular). */
+function usePressedKeys(): Set<string> {
+  const [keys, setKeys] = useState<Set<string>>(() => new Set());
+  useEffect(() => {
+    const set = (id: string, down: boolean) => setKeys((prev) => {
+      if (prev.has(id) === down) return prev;
+      const next = new Set(prev);
+      if (down) next.add(id); else next.delete(id);
+      return next;
+    });
+    const onDown = (e: KeyboardEvent) => set(keyId(e.key), true);
+    const onUp = (e: KeyboardEvent) => {
+      set(keyId(e.key), false);
+      // A modifier whose key-up went elsewhere is still reported by the next event.
+      if (!e.ctrlKey) set("ctrl", false);
+      if (!e.metaKey) set("win", false);
+      if (!e.altKey) set("alt", false);
+      if (!e.shiftKey) set("shift", false);
+    };
+    const clear = () => setKeys((prev) => (prev.size ? new Set() : prev));
+    window.addEventListener("keydown", onDown, true);
+    window.addEventListener("keyup", onUp, true);
+    window.addEventListener("blur", clear);
+    return () => {
+      window.removeEventListener("keydown", onDown, true);
+      window.removeEventListener("keyup", onUp, true);
+      window.removeEventListener("blur", clear);
+    };
+  }, []);
+  return keys;
+}
+
+/** Renders "Ctrl+Win+Space" as separate key caps; with `pressed`, held keys light up and sink. */
+function Chord({ chord, pressed, all = false }: { chord: string; pressed?: Set<string>; all?: boolean }) {
   const parts = chord.split("+").map((p) => p.trim()).filter(Boolean);
   if (!parts.length) return <span className="faint">not set</span>;
   return (
-    <span className="onb-chord">
+    <span className={`onb-chord ${pressed ? "live" : ""}`}>
       {parts.map((p, i) => (
         <span key={`${p}-${i}`} className="onb-chord-part">
           {i > 0 && <span className="onb-chord-plus">+</span>}
-          <Kbd>{keyLabel(p)}</Kbd>
+          <Kbd className={all || pressed?.has(keyId(p)) ? "pressed" : undefined}>{keyLabel(p)}</Kbd>
         </span>
       ))}
     </span>
   );
 }
 
-function StepHead({ icon, title, body }: { icon: React.ReactNode; title: string; body: string }) {
+function StepHead({ icon, title, body }: { icon?: React.ReactNode; title: string; body: string }) {
   return (
     <div className="onb-head">
-      <div className="onb-icon">{icon}</div>
+      {icon && <div className="onb-icon">{icon}</div>}
       <h1 className="onb-title">{title}</h1>
       <p className="onb-body">{body}</p>
     </div>
@@ -71,6 +133,11 @@ export default function Onboarding() {
   const [level, setLevel] = useState(0);
   const [heard, setHeard] = useState(false);
   const [micError, setMicError] = useState("");
+  const [phase, setPhase] = useState<DictationState["phase"]>("idle");
+  const [mode, setMode] = useState<DictationState["mode"]>("push-to-talk");
+  const pressed = usePressedKeys();
+  // A held push-to-talk chord sinks every cap even when Windows keeps a key event from the page.
+  const holding = phase === "recording" && mode === "push-to-talk";
 
   // step 4: hotkeys
   const [recording, setRecording] = useState<null | keyof typeof settings.hotkeys>(null);
@@ -99,6 +166,8 @@ export default function Onboarding() {
     events
       .onState((s: DictationState) => {
         setLevel(s.level);
+        setPhase(s.phase);
+        setMode(s.mode);
         if (s.level > 0.04) setHeard(true);
       })
       .then((f) => { if (dead) f(); else un = f; })
@@ -143,8 +212,13 @@ export default function Onboarding() {
     };
   }, [step, settings.microphone]);
 
+  // The practice box takes the dictation even when the focus is on a button (say Continue).
   useEffect(() => {
-    if (step === "practice") practiceRef.current?.focus();
+    if (step !== "practice") return;
+    const box = practiceRef.current;
+    box?.focus();
+    setFallbackField(box);
+    return () => setFallbackField(null);
   }, [step]);
 
   const hasKey = providers.groqApiKey.trim().length > 0 || providers.openrouterApiKey.trim().length > 0;
@@ -316,7 +390,7 @@ export default function Onboarding() {
                     <span className="onb-field-label">{row.label}</span>
                     <span className="onb-field-sub">{row.hint}</span>
                   </div>
-                  <Chord chord={settings.hotkeys[row.key]} />
+                  <Chord chord={settings.hotkeys[row.key]} pressed={recording ? undefined : pressed} />
                   <Button variant="secondary" size="sm" onClick={() => { setDraftChord(settings.hotkeys[row.key]); setRecording(row.key); }}>
                     <Pencil size={14} />Change
                   </Button>
@@ -331,19 +405,27 @@ export default function Onboarding() {
         return (
           <>
             <StepHead
-              icon={<Sparkles size={22} strokeWidth={1.8} />}
               title="Try it: write a short email"
-              body="Click into the box below so it has focus, then hold your hotkey and speak. Spechy types the finished text right into it."
+              body="Hold your chord, say the line below and let go. Spechy writes the finished text into the email."
             />
             <div className="onb-fields">
-              <div className="onb-field">
-                <textarea
-                  ref={practiceRef}
-                  className="input onb-textarea"
-                  value={practice}
-                  placeholder={PRACTICE_HINT}
-                  onChange={(e) => setPractice(e.target.value)}
-                />
+              <div className="onb-try">
+                <div className="onb-try-bar">
+                  <span className="onb-try-hold">Hold <Chord chord={settings.hotkeys.pushToTalk} pressed={pressed} all={holding} /></span>
+                  <PracticeStatus phase={phase} level={level} inserted={practice.trim().length > 0} />
+                </div>
+                <p className="onb-try-say">“{PRACTICE_LINE}”</p>
+                <div className="onb-mail" onClick={() => practiceRef.current?.focus()}>
+                  <div className="onb-mail-head"><span className="faint">To</span>Anna</div>
+                  <textarea
+                    ref={practiceRef}
+                    className="onb-mail-body"
+                    value={practice}
+                    placeholder="Your words appear here."
+                    aria-label="Practice email"
+                    onChange={(e) => setPractice(e.target.value)}
+                  />
+                </div>
                 {practice.trim().length > 0 && (
                   <p className="onb-ok-line">
                     <Check size={14} />
@@ -358,7 +440,7 @@ export default function Onboarding() {
                 <span className="onb-field-sub">
                   A snippet turns a phrase you say into text you never want to spell out. Type what
                   <span className="onb-quote">my email address</span>
-                  should insert, then dictate that phrase into the box above.
+                  should insert, then say that phrase into the email above.
                 </span>
                 <div className="onb-key">
                   <input

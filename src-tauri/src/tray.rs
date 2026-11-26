@@ -110,13 +110,28 @@ pub fn show_main_window<R: Runtime>(app: &AppHandle<R>) {
         return;
     };
     match tauri::WebviewWindowBuilder::from_config(app, &config) {
+        // Built hidden ("visible": false); the page shows it once its theme is drawn.
         Ok(builder) => match builder.build() {
-            Ok(window) => {
-                let _ = window.show();
-                let _ = window.set_focus();
-            }
+            Ok(_) => reveal_fallback(app),
             Err(e) => log::error!("the main window could not be rebuilt: {e}"),
         },
         Err(e) => log::error!("the main window could not be rebuilt: {e}"),
     }
+}
+
+/// The main window starts hidden and the page shows it once the saved theme has drawn
+/// (src/lib/reveal.ts), so it never flashes another theme. If the page never gets that far
+/// (dev server down, script error), show it anyway after a moment: the app must never be invisible.
+pub fn reveal_fallback<R: Runtime>(app: &AppHandle<R>) {
+    let app = app.clone();
+    std::thread::spawn(move || {
+        std::thread::sleep(std::time::Duration::from_secs(3));
+        if let Some(window) = app.get_webview_window("main") {
+            if !window.is_visible().unwrap_or(true) {
+                log::warn!("main window was not revealed by the page, showing it now");
+                let _ = window.show();
+                let _ = window.set_focus();
+            }
+        }
+    });
 }

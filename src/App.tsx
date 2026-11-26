@@ -17,7 +17,8 @@ import Style from "./views/Style";
 import Help from "./views/Help";
 import SettingsView from "./views/settings/Settings";
 import Onboarding from "./views/Onboarding";
-import { useTheme } from "./lib/theme";
+import { cachedTheme, useTheme } from "./lib/theme";
+import { revealWindow } from "./lib/reveal";
 import ThemeLayer from "./themes/ThemeLayer";
 
 // Games are loaded on demand so the main bundle stays small.
@@ -53,17 +54,24 @@ function PremiumThemeGuard() {
   return null;
 }
 
+// Until the saved settings arrive, show the theme of the last run, never the built-in default.
+const bootSettings: Settings = { ...defaultSettings, theme: cachedTheme() };
+
 export default function App() {
-  const [settings, setSettings] = useState<Settings>(defaultSettings);
-  const settingsRef = useRef(defaultSettings);
-  const storedSettings = useRef(defaultSettings);
+  const [settings, setSettings] = useState<Settings>(bootSettings);
+  const settingsRef = useRef(bootSettings);
+  const storedSettings = useRef(bootSettings);
   const saveQueue = useRef(Promise.resolve());
   const pendingSaves = useRef(0);
+  // Nothing but the themed ground renders before the saved settings are in, so neither the shell
+  // nor the onboarding flashes up for a user who is in the other one.
+  const [loaded, setLoaded] = useState(false);
   const receiveSettings = useCallback((value: Settings) => {
     if (pendingSaves.current > 0) return;
     storedSettings.current = value;
     settingsRef.current = value;
     setSettings(value);
+    setLoaded(true);
   }, []);
   const [view, setView] = useState("home");
   const [settingsOpen, setSettingsOpen] = useState(false);
@@ -123,6 +131,19 @@ export default function App() {
 
   useTheme(settings.theme);
 
+  // Show the hidden window once the real theme is on screen: right after the settings for plain
+  // themes, after the field's first frame for animated ones (ThemeLayer onPainted). The timer is a
+  // safety net in case the field never reports.
+  const waitsForField = !!themeById(settings.theme)?.backdrop;
+  const [fieldPainted, setFieldPainted] = useState(false);
+  const onFieldPainted = useCallback(() => setFieldPainted(true), []);
+  useEffect(() => {
+    if (!loaded) return;
+    if (!waitsForField || fieldPainted) { revealWindow(); return; }
+    const t = window.setTimeout(revealWindow, 600);
+    return () => window.clearTimeout(t);
+  }, [loaded, waitsForField, fieldPainted]);
+
   // Monday payout on app start (no request unless the player joined the leaderboard). The Games
   // page flies the coins in later; outside Games the toast tells right away.
   const payoutChecked = useRef(false);
@@ -175,9 +196,9 @@ export default function App() {
   return (
     <StoreContext.Provider value={store}>
       <PremiumThemeGuard />
-      <ThemeLayer theme={settings.theme} />
+      <ThemeLayer theme={settings.theme} shell={loaded && settings.onboarded} onPainted={onFieldPainted} />
       <div className={`app ${MOCK ? "mock" : ""}`}>
-        {!settings.onboarded ? (
+        {!loaded ? null : !settings.onboarded ? (
           <Onboarding />
         ) : (
           <>

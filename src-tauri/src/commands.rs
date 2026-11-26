@@ -190,10 +190,15 @@ pub async fn download_update(app: tauri::AppHandle, on_progress: tauri::ipc::Cha
         .await.map_err(|e| e.to_string())?
 }
 
+/// Error of `install_update` while a dictation runs; matched by the frontend, keep in step with ipc.ts.
+pub const DICTATION_RUNNING: &str = "dictation-running";
+
 #[tauri::command]
 pub async fn install_update(app: tauri::AppHandle) -> Result<(), String> {
-    if crate::pipeline::state().phase != crate::model::Phase::Idle {
-        return Err("Finish your current dictation before installing the update.".into());
+    // The restart would lose a running dictation. The UI waits on this marker and retries
+    // once the dictation is done (src/components/UpdateCheck.tsx).
+    if crate::pipeline::dictation_running() {
+        return Err(DICTATION_RUNNING.into());
     }
     tauri::async_runtime::spawn_blocking(crate::updates::install).await.map_err(|e| e.to_string())??;
     app.exit(0);

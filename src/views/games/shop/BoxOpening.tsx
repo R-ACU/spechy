@@ -3,14 +3,14 @@
 //   1. charge: the parcel rattles harder while a local glow climbs through the rarity colours up
 //      to the real rarity and stops there (never above it, no rarity word before the reveal).
 //   2. open: the parcel tears (bag) or flips its flaps (boxes), a beam and rays in that colour.
-//   3. reel: one deceleration curve that ends exactly on the winning card; nothing moves after it
-//      first comes to rest. The bait is only the neighbours: a legendary right before the win
-//      (the reel crawls past it just before it stops) and a high card right after it. Ticks rise
-//      in pitch while the reel slows, a heartbeat slows down.
+//   3. reel: one deceleration curve that ends exactly on the winning card, in its left part; then the
+//      reel glides on to centre that same card (never onto another one). The bait is only the
+//      neighbours: a legendary right before the win (the reel crawls past it just before it stops)
+//      and a high card right after it. Ticks rise in pitch while the reel slows, a heartbeat slows down.
 //   4. celebrate in proportion to the rarity; duplicates fly their refund to the coin chip.
 // Click anywhere outside the buttons to skip. Reduced motion shows the result directly.
 // No full-screen flash anywhere: the overlay only blurs, all light stays local to the parcel or card.
-import { useEffect, useRef, useState, type CSSProperties } from "react";
+import { useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
 import { Check, Sparkles } from "lucide-react";
 import type { BoxId, BoxOpening as Opening, TitleRarity } from "../../../lib/ipc";
 import { economySnapshot, equipItem, fmtCoins, holdBalance, openBox, setEconomyState } from "../../../lib/economy";
@@ -44,6 +44,9 @@ export default function BoxOpening({ boxId, onClose, onAgain }: Props) {
   const closing = useRef(false);
   // One backend roll per mount, even when React runs the effect twice (StrictMode in dev).
   const roll = useRef<Promise<Opening> | null>(null);
+  // Built once: parcelHtml makes fresh clip-path ids on every call, so a new string per render made
+  // React swap the SVG mid show and the tear played on a detached copy (the parcel only "popped").
+  const pkgHtml = useMemo(() => parcelHtml(boxId, 170), [boxId]);
 
   useEffect(() => {
     const root = rootRef.current!;
@@ -219,25 +222,33 @@ export default function BoxOpening({ boxId, onClose, onAgain }: Props) {
         requestAnimationFrame(loop);
       };
       requestAnimationFrame(loop);
-      // The only move of the reel: one curve that ends on the result. The final transform is
-      // written as a plain style, so nothing (not even a cancelled animation) can move it later.
+      // One curve that ends on the result. Each final transform is written as a plain style, so
+      // nothing (not even a cancelled animation) can move the reel afterwards.
       const spin = A(track, [{ transform: "translateX(0)" }, { transform: `translateX(${stop}px)` }], { duration: 4200, easing: "cubic-bezier(.06,.72,.1,1)", fill: "forwards" });
       await finished(spin);
       track.style.transform = `translateX(${stop}px)`;
       spin.cancel();
-      track.dataset.rest = "1";
       running = false;
       if (gx.dead) return;
 
-      // 4. land and celebrate in proportion to the rarity
+      // 4. land: the win is known, the marker steps aside and the reel glides the card to the centre
       const win = track.children[WIN] as HTMLElement;
       win.classList.add("win");
       A(marker, [{ opacity: 1 }, { opacity: 0 }], { duration: 250, fill: "forwards" });
       gx.live = false;
       setLive(false);
-      const wr = win.getBoundingClientRect();
       sfx.reveal(rar);
       if (ri >= 2) sfx.fanfare(rar);
+      const centre = xAt(WIN, 0);
+      const glide = A(track, [{ transform: `translateX(${stop}px)` }, { transform: `translateX(${centre}px)` }], { duration: 620, easing: "cubic-bezier(.33,0,.15,1)", fill: "forwards" });
+      await finished(glide);
+      track.style.transform = `translateX(${centre}px)`;
+      glide.cancel();
+      track.dataset.rest = "1";
+      if (gx.dead) return;
+
+      // 5. celebrate in proportion to the rarity, around the centred card
+      const wr = win.getBoundingClientRect();
       burst(wr.left + wr.width / 2, wr.top + wr.height / 2, rc(rar), [10, 24, 46, 80][ri], ri === 3);
       if (ri >= 2 && !reduce) pulse(win, rc(rar), ri === 3 ? 3 : 2, 900);
       if (ri === 3) confetti(reel.getBoundingClientRect(), 70);
@@ -321,7 +332,7 @@ export default function BoxOpening({ boxId, onClose, onAgain }: Props) {
         <div className="gx-glow" />
         <div className="gx-rays">{Array.from({ length: 18 }, (_, i) => <i key={i} style={{ transform: `rotate(${i * 20}deg)` }} />)}</div>
         <div className="gx-beam" />
-        <div className="gx-pkg" dangerouslySetInnerHTML={{ __html: parcelHtml(boxId, 170) }} />
+        <div className="gx-pkg" dangerouslySetInnerHTML={{ __html: pkgHtml }} />
         <div className="gx-pips">{RARITIES.map((r) => <i key={r} style={{ "--pc": `var(--rarity-${r})` } as CSSProperties} />)}</div>
       </div>
       <div className="gx-reel">

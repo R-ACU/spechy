@@ -1,7 +1,7 @@
-import { useEffect, useState, type ReactNode } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 import { AlertCircle, CheckCircle2, Download, LoaderCircle, RefreshCw } from "lucide-react";
 import { isTauri } from "@tauri-apps/api/core";
-import { api } from "../lib/ipc";
+import { api, events, DICTATION_RUNNING } from "../lib/ipc";
 import { safe } from "../lib/fallback";
 import { Button } from "./ui";
 
@@ -108,6 +108,13 @@ export default function UpdateCheck() {
     finally { setChecking(false); }
   };
 
+  // A running dictation is not an error: the update waits for it and then installs by itself.
+  const [waiting, setWaiting] = useState(false);
+  const failed = (reason: unknown) => {
+    if (String(reason) === DICTATION_RUNNING) setWaiting(true);
+    else setError(String(reason));
+  };
+
   const download = async () => {
     setDownloading(true);
     setError("");
@@ -117,7 +124,7 @@ export default function UpdateCheck() {
       setInstalling(true);
       await api.installUpdate();
     }
-    catch (reason) { setError(String(reason)); }
+    catch (reason) { failed(reason); }
     finally { setDownloading(false); setInstalling(false); }
   };
 
@@ -125,8 +132,27 @@ export default function UpdateCheck() {
     setInstalling(true);
     setError("");
     try { await api.installUpdate(); }
-    catch (reason) { setError(String(reason)); setInstalling(false); }
+    catch (reason) { failed(reason); setInstalling(false); }
   };
+  const installRef = useRef(install);
+  installRef.current = install;
+
+  // While waiting: follow the dictation state (event plus a slow poll as a safety net) and
+  // install as soon as nothing runs any more. Error counts as done, as in the backend.
+  useEffect(() => {
+    if (!waiting) return;
+    let done = false;
+    const onPhase = (phase: string) => {
+      if (done || (phase !== "idle" && phase !== "error")) return;
+      done = true;
+      setWaiting(false);
+      void installRef.current();
+    };
+    let unlisten: (() => void) | undefined;
+    void events.onState((s) => onPhase(s.phase)).then((f) => { if (done) f(); else unlisten = f; }).catch(() => {});
+    const poll = window.setInterval(() => { void api.getState().then((s) => onPhase(s.phase)).catch(() => {}); }, 1500);
+    return () => { done = true; unlisten?.(); window.clearInterval(poll); };
+  }, [waiting]);
 
   const percent = progress?.total ? Math.min(100, Math.round(progress.downloaded / progress.total * 100)) : null;
   const busy = checking || downloading || installing;
@@ -142,6 +168,11 @@ export default function UpdateCheck() {
       action: ready ? { label: "Update now", primary: true, onClick: () => void install(), disabled: busy }
         : result?.available ? { label: "Try again", primary: true, icon: "download", onClick: () => void download(), disabled: busy }
         : { label: "Try again", primary: false, icon: "refresh", onClick: () => void check(), disabled: busy || !tauri },
+    };
+    if (waiting) return {
+      tone: "busy", current, title: `Spechy ${next} installs after your dictation`,
+      detail: "Finish your dictation first, then the update installs and Spechy restarts.",
+      action: { label: "Not now", primary: false, onClick: () => setWaiting(false) },
     };
     if (installing) return { tone: "busy", current, title: `Installing Spechy ${next}`, detail: "Spechy closes and restarts in a moment." };
     if (downloading) return {

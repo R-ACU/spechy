@@ -26,10 +26,21 @@ pub fn is_enabled() -> bool {
     false
 }
 
+/// A dev build (`tauri dev`, `cargo run`) lives under `target\`. It must never touch the
+/// login entry: writing it would start the debug build at login without its Vite server
+/// and block the installed app via the single-instance lock; deleting it would switch
+/// off the installed app's autostart.
+fn is_dev_build() -> bool {
+    std::env::current_exe().is_ok_and(|exe| exe.components().any(|c| c.as_os_str() == "target"))
+}
+
 #[cfg(windows)]
 pub fn set_enabled(enabled: bool) -> Result<(), String> {
     use winreg::enums::HKEY_CURRENT_USER;
     use winreg::RegKey;
+    if is_dev_build() {
+        return Ok(());
+    }
     let hkcu = RegKey::predef(HKEY_CURRENT_USER);
     let (run, _) = hkcu.create_subkey(RUN_KEY).map_err(|e| e.to_string())?;
     if enabled {
@@ -60,16 +71,15 @@ pub fn is_enabled() -> bool {
 
 #[cfg(target_os = "linux")]
 pub fn set_enabled(enabled: bool) -> Result<(), String> {
+    if is_dev_build() {
+        return Ok(());
+    }
     let path = desktop_file().ok_or("No config folder found.")?;
     if !enabled {
         let _ = std::fs::remove_file(&path);
         return Ok(());
     }
     let exe = std::env::current_exe().map_err(|e| e.to_string())?;
-    // A dev build must not register itself for every login.
-    if exe.components().any(|c| c.as_os_str() == "target") {
-        return Ok(());
-    }
     let entry = format!(
         "[Desktop Entry]\nType=Application\nName=Spechy\nExec=\"{}\" --minimized\nIcon=spechy\nX-GNOME-Autostart-enabled=true\n",
         exe.display()

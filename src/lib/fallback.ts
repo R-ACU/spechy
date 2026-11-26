@@ -20,7 +20,7 @@ export async function safe<T>(call: () => Promise<T>, fallback: T): Promise<T> {
 export const defaultSettings: Settings = {
   userName: "",
   appLanguage: "en",
-  theme: "system",
+  theme: "ascii",
   dictationLanguages: ["en", "de"],
   primaryLanguage: "en",
   microphone: "",
@@ -55,6 +55,7 @@ export const defaultSettings: Settings = {
   style: { defaultTone: "neutral", appRules: [], customRules: "", keepFillers: false },
   scratchpadPinned: false,
   onboarded: !ONBOARDING_MOCK,
+  clipboardPhrase: "paste clipboard",
   leaderboardUrl: "",
 };
 

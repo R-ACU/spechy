@@ -4,12 +4,19 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Spechy</title>
-    <!-- Paint the window ground before the bundle runs, so the Tauri window does not flash.
-         App.tsx sets html[data-theme] from the cached choice on its first render. -->
-    <style>
-      html { background: #f3f1ee; color-scheme: light; }
-      html[data-theme="dark"] { background: #141311; color-scheme: dark; }
-    </style>
+    <!-- Paint the ground of the last theme before the bundle runs (src/lib/theme.ts caches it), so
+         the window never shows another theme first. Falls back to the ASCII ground of a fresh install.
+         theme.ts removes this inline background once the stylesheets are in. -->
+    <script>
+      (function () {
+        var bg = "#0b0b0b";
+        try { var v = localStorage.getItem("spechy.bg"); if (/^#[0-9a-f]{6}$/i.test(v || "")) bg = v; } catch (e) {}
+        var r = document.documentElement;
+        r.style.background = bg;
+        var n = parseInt(bg.slice(1), 16);
+        r.style.colorScheme = ((n >> 16) & 255) * 0.299 + ((n >> 8) & 255) * 0.587 + (n & 255) * 0.114 > 128 ? "light" : "dark";
+      })();
+    </script>
   </head>
   <body>
     <div id="root"></div>

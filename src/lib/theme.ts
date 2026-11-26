@@ -5,25 +5,30 @@
 import { useEffect } from "react";
 import { isTauri } from "@tauri-apps/api/core";
 import { getCurrentWindow } from "@tauri-apps/api/window";
-import { isThemeId, themeById } from "../themes/registry";
+import { isThemeId, loadBackdrop, themeById } from "../themes/registry";
 import { usePreviewTheme } from "../themes/preview";
 import "../themes/themes.css";
 
 export type ThemeChoice = string;
+/** Theme of a fresh install, also what an empty cache falls back to (keep in step with model.rs). */
+export const DEFAULT_THEME = "ascii";
 const THEME_KEY = "spechy.theme";
+/** Resolved --bg of the last theme, read by the inline script in index.html before any CSS loads. */
+const BG_KEY = "spechy.bg";
 
 function prefersDark(): boolean {
   return typeof window !== "undefined" && typeof window.matchMedia === "function" && window.matchMedia("(prefers-color-scheme: dark)").matches;
 }
 
-function cachedTheme(): ThemeChoice {
+/** The theme of the last run, so the first frame already shows it instead of a default. */
+export function cachedTheme(): ThemeChoice {
   try {
     const v = localStorage.getItem(THEME_KEY);
     if (isThemeId(v)) return v;
   } catch {
-    /* storage blocked: fall through to system */
+    /* storage blocked: fall through to the default */
   }
-  return "system";
+  return DEFAULT_THEME;
 }
 
 /** Base palette ("light" | "dark") a choice resolves to right now. Unknown ids behave like "system". */
@@ -37,10 +42,11 @@ let nativeBg = "";
 
 /** Paint the native window ground in the resolved --bg so window edges match while resizing. */
 function syncNativeBackground(): void {
-  if (!isTauri()) return;
   const hex = getComputedStyle(document.documentElement).getPropertyValue("--bg").trim();
   const m = /^#([0-9a-f]{6})$/i.exec(hex);
-  if (!m || hex === nativeBg) return;
+  if (!m) return;
+  try { localStorage.setItem(BG_KEY, hex); } catch { /* storage blocked */ }
+  if (!isTauri() || hex === nativeBg) return;
   nativeBg = hex;
   const n = parseInt(m[1], 16);
   getCurrentWindow().setBackgroundColor([(n >> 16) & 255, (n >> 8) & 255, n & 255]).catch(() => {
@@ -56,10 +62,17 @@ function applyTheme(choice: ThemeChoice, systemDark: boolean): void {
   root.setAttribute("data-theme", base);
   root.setAttribute("data-skin", skin);
   root.style.colorScheme = base;
+  // index.html paints the cached ground inline until the stylesheet takes over.
+  root.style.removeProperty("background");
   syncNativeBackground();
 }
 
-if (typeof document !== "undefined") applyTheme(cachedTheme(), prefersDark());
+if (typeof document !== "undefined") {
+  const first = cachedTheme();
+  applyTheme(first, prefersDark());
+  // Fetch the field chunk while React mounts, so the animated theme is there in the first frame.
+  void loadBackdrop(first).catch(() => {});
+}
 
 /** Keep <html> in sync with settings.theme, following the OS while the theme's base is "system". */
 export function useTheme(choice: ThemeChoice): void {

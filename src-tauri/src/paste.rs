@@ -88,6 +88,102 @@ pub fn set_clipboard(text: &str) -> Result<(), String> {
     Ok(())
 }
 
+/// Everything that was on the clipboard, so a paste or a Ctrl+C of ours can hand it back
+/// whole. Saving only the text lost screenshots: SnipDrop puts an image (CF_DIB, PNG), the
+/// file path as text and CF_HDROP there at once, and afterwards only the path came back.
+#[cfg(windows)]
+pub struct ClipboardSnapshot {
+    formats: Vec<(u32, Vec<u8>)>,
+}
+
+/// Formats whose data is a GDI handle or a pointer, not memory: copying the bytes would copy
+/// a handle that dies with the clipboard. Windows synthesizes the GDI ones again from the
+/// memory formats (CF_BITMAP from CF_DIB, for example).
+#[cfg(windows)]
+fn is_handle_format(format: u32) -> bool {
+    matches!(format, 2 | 3 | 9 | 14 | 0x80 | 0x82 | 0x83 | 0x8E) // BITMAP, METAFILEPICT, PALETTE, ENHMETAFILE, OWNERDISPLAY, DSP*
+        || (0x0200..=0x03FF).contains(&format) // CF_PRIVATEFIRST..CF_GDIOBJLAST
+}
+
+/// Copy every memory format off the clipboard. None when it cannot be opened.
+#[cfg(windows)]
+pub fn snapshot_clipboard() -> Option<ClipboardSnapshot> {
+    use windows::Win32::Foundation::HGLOBAL;
+    use windows::Win32::System::DataExchange::{CloseClipboard, EnumClipboardFormats, GetClipboardData};
+    use windows::Win32::System::Memory::{GlobalLock, GlobalSize, GlobalUnlock};
+    const MAX_FORMAT_BYTES: usize = 256 * 1024 * 1024;
+
+    unsafe {
+        open_clipboard_with_retry().ok()?;
+        let mut formats = Vec::new();
+        let mut format = 0u32;
+        loop {
+            format = EnumClipboardFormats(format);
+            if format == 0 {
+                break;
+            }
+            if is_handle_format(format) {
+                continue;
+            }
+            let Ok(handle) = GetClipboardData(format) else { continue };
+            let global = HGLOBAL(handle.0);
+            let size = GlobalSize(global);
+            if size == 0 || size > MAX_FORMAT_BYTES {
+                continue;
+            }
+            let pointer = GlobalLock(global) as *const u8;
+            if pointer.is_null() {
+                continue;
+            }
+            let bytes = std::slice::from_raw_parts(pointer, size).to_vec();
+            let _ = GlobalUnlock(global);
+            formats.push((format, bytes));
+        }
+        let _ = CloseClipboard();
+        Some(ClipboardSnapshot { formats })
+    }
+}
+
+/// Put a snapshot back. An empty snapshot (the clipboard was empty) changes nothing.
+#[cfg(windows)]
+pub fn restore_clipboard(snapshot: &ClipboardSnapshot) -> Result<(), String> {
+    use windows::Win32::Foundation::{GlobalFree, HANDLE};
+    use windows::Win32::System::DataExchange::{CloseClipboard, EmptyClipboard, SetClipboardData};
+    use windows::Win32::System::Memory::{GlobalAlloc, GlobalLock, GlobalUnlock, GMEM_MOVEABLE};
+
+    if snapshot.formats.is_empty() {
+        return Ok(());
+    }
+    unsafe {
+        open_clipboard_with_retry()?;
+        if let Err(e) = EmptyClipboard() {
+            let _ = CloseClipboard();
+            return Err(e.to_string());
+        }
+        for (format, bytes) in &snapshot.formats {
+            let Ok(handle) = GlobalAlloc(GMEM_MOVEABLE, bytes.len()) else { continue };
+            let target = GlobalLock(handle) as *mut u8;
+            if target.is_null() {
+                let _ = GlobalFree(handle);
+                continue;
+            }
+            std::ptr::copy_nonoverlapping(bytes.as_ptr(), target, bytes.len());
+            let _ = GlobalUnlock(handle);
+            // On success the clipboard owns the memory; otherwise it is still ours to free.
+            if SetClipboardData(*format, HANDLE(handle.0)).is_err() {
+                let _ = GlobalFree(handle);
+            }
+        }
+        CloseClipboard().map_err(|e| e.to_string())?;
+    }
+    Ok(())
+}
+
+#[cfg(windows)]
+fn clipboard_sequence() -> u32 {
+    unsafe { windows::Win32::System::DataExchange::GetClipboardSequenceNumber() }
+}
+
 // ------------------------------------------------------------------- input
 
 #[cfg(windows)]
@@ -208,8 +304,9 @@ pub fn paste_text(text: &str) -> Result<(), String> {
     if text.is_empty() {
         return Ok(());
     }
-    let previous = get_clipboard_text();
+    let previous = snapshot_clipboard();
     set_clipboard(text)?;
+    let ours = clipboard_sequence();
     release_held_modifiers();
 
     send(&[
@@ -219,12 +316,13 @@ pub fn paste_text(text: &str) -> Result<(), String> {
         key_input(VK_CONTROL.0, true),
     ]);
 
-    // Give the target app time to read the clipboard, then hand the old content back.
+    // Give the target app time to read the clipboard, then hand the old content back,
+    // all formats of it. Something copied in the meantime is newer and stays.
     std::thread::spawn(move || {
         std::thread::sleep(Duration::from_millis(RESTORE_DELAY_MS));
         if let Some(old) = previous {
-            if !old.is_empty() {
-                let _ = set_clipboard(&old);
+            if clipboard_sequence() == ours {
+                let _ = restore_clipboard(&old);
             }
         }
     });
@@ -267,11 +365,10 @@ pub fn type_text(text: &str) -> Result<(), String> {
 
 #[cfg(windows)]
 pub fn copy_selection() -> Option<String> {
-    use windows::Win32::System::DataExchange::GetClipboardSequenceNumber;
     use windows::Win32::UI::Input::KeyboardAndMouse::{VK_C, VK_CONTROL};
 
-    let previous = get_clipboard_text();
-    let before = unsafe { GetClipboardSequenceNumber() };
+    let previous = snapshot_clipboard();
+    let before = clipboard_sequence();
 
     release_held_modifiers();
     send(&[
@@ -285,14 +382,15 @@ pub fn copy_selection() -> Option<String> {
     let mut selection = None;
     while Instant::now() < deadline {
         std::thread::sleep(Duration::from_millis(15));
-        if unsafe { GetClipboardSequenceNumber() } != before {
+        if clipboard_sequence() != before {
             selection = get_clipboard_text();
             break;
         }
     }
 
-    if let Some(old) = previous {
-        let _ = set_clipboard(&old);
+    // Only our Ctrl+C changed the clipboard; nothing to hand back when it copied nothing.
+    if let (Some(old), true) = (previous, selection.is_some()) {
+        let _ = restore_clipboard(&old);
     }
     selection.filter(|s| !s.is_empty())
 }
@@ -314,6 +412,47 @@ mod tests {
         // Shift+Alt+Z: the Z never reached the app, so Alt must not arrive as a bare tap.
         assert_eq!(keys(&[0xA0, 0xA4]), vec![(MASK_KEY, false), (MASK_KEY, true), (0xA0, true), (0xA4, true)]);
         assert_eq!(keys(&[0xA2, 0x5B]), vec![(MASK_KEY, false), (MASK_KEY, true), (0xA2, true), (0x5B, true)]);
+    }
+
+    /// Touches the real clipboard (and puts the user's content back at the end):
+    /// cargo test --lib clipboard_snapshot_keeps_every_format -- --ignored --test-threads=1
+    #[test]
+    #[ignore = "uses the real clipboard"]
+    fn clipboard_snapshot_keeps_every_format() {
+        use windows::Win32::Foundation::HANDLE;
+        use windows::Win32::System::DataExchange::{CloseClipboard, EmptyClipboard, IsClipboardFormatAvailable, SetClipboardData};
+        use windows::Win32::System::Memory::{GlobalAlloc, GlobalLock, GlobalUnlock, GMEM_MOVEABLE};
+        let users = snapshot_clipboard().expect("clipboard readable");
+
+        // A screenshot tool's clipboard: a 2x2 DIB plus the file path as text.
+        let mut dib = Vec::new();
+        for v in [40u32, 2, 2] { dib.extend_from_slice(&v.to_le_bytes()); }
+        dib.extend_from_slice(&1u16.to_le_bytes());
+        dib.extend_from_slice(&32u16.to_le_bytes());
+        for _ in 0..6 { dib.extend_from_slice(&0u32.to_le_bytes()); }
+        dib.extend_from_slice(&[255u8; 16]);
+        set_clipboard("C:\\shots\\shot.png").unwrap();
+        unsafe {
+            open_clipboard_with_retry().unwrap();
+            let handle = GlobalAlloc(GMEM_MOVEABLE, dib.len()).unwrap();
+            let p = GlobalLock(handle) as *mut u8;
+            std::ptr::copy_nonoverlapping(dib.as_ptr(), p, dib.len());
+            let _ = GlobalUnlock(handle);
+            SetClipboardData(8, HANDLE(handle.0)).unwrap(); // CF_DIB, next to the text
+            CloseClipboard().unwrap();
+        }
+        let shot = snapshot_clipboard().unwrap();
+
+        // What a paste does: our text replaces everything, then the snapshot comes back.
+        set_clipboard("dictated text").unwrap();
+        restore_clipboard(&shot).unwrap();
+        let image_back = unsafe { IsClipboardFormatAvailable(8).is_ok() };
+        let text_back = get_clipboard_text();
+
+        unsafe { open_clipboard_with_retry().unwrap(); let _ = EmptyClipboard(); let _ = CloseClipboard(); }
+        restore_clipboard(&users).unwrap();
+        assert!(image_back, "the image must survive a paste");
+        assert_eq!(text_back.as_deref(), Some("C:\\shots\\shot.png"));
     }
 
     #[test]

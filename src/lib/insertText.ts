@@ -163,12 +163,20 @@ function insertIntoEditable(el: HTMLElement, text: string): boolean {
   return done;
 }
 
+/** Field a view wants dictations in when no field has the focus (the onboarding practice box). */
+let fallbackField: Editable | null = null;
+
+/** Register (or clear with null) the field that takes dictations while nothing else is focused. */
+export function setFallbackField(el: Editable | null): void {
+  fallbackField = el;
+}
+
 /** Put the text into the field the user was in. False when there is no usable field. */
 export function insertAtCursor(text: string): boolean {
   const active = document.activeElement;
   if (isPassword(active)) return false;
-  const target = isWritable(active) ? active : lastField;
-  if (!target || !isWritable(target)) return false;
+  const target = [active, lastField, fallbackField].find(isWritable);
+  if (!target) return false;
   try {
     return isTextField(target) ? insertIntoField(target, text) : insertIntoEditable(target, text);
   } catch {

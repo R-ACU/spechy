@@ -235,6 +235,14 @@
 :root:is([data-skin="halftone"], [data-skin="ascii"], [data-skin="genesis"], [data-skin="bloom"], [data-skin="horizon"]) .hist-row:hover + .hist-row::before { opacity: 0; }
 :root:is([data-skin="halftone"], [data-skin="ascii"], [data-skin="genesis"], [data-skin="bloom"], [data-skin="horizon"]) .hist-time { color: var(--text-3); font-variant-numeric: tabular-nums; }
 
+/* Onboarding over the field: the field runs behind the whole window, the card is the same glass as Settings. */
+:root:is([data-skin="halftone"], [data-skin="ascii"], [data-skin="genesis"], [data-skin="bloom"], [data-skin="horizon"]) .onb { background: transparent; }
+:root:is([data-skin="halftone"], [data-skin="ascii"], [data-skin="genesis"], [data-skin="bloom"], [data-skin="horizon"]) .onb-card {
+  background: color-mix(in srgb, var(--bg) 82%, transparent);
+  border: 1px solid color-mix(in srgb, var(--text) 10%, transparent);
+  backdrop-filter: blur(28px) saturate(.8); -webkit-backdrop-filter: blur(28px) saturate(.8);
+}
+
 /* Settings over the field: one-tone glass panel (variant A); nav is transparent, cards stay readable. */
 :root:is([data-skin="halftone"], [data-skin="ascii"], [data-skin="genesis"], [data-skin="bloom"], [data-skin="horizon"]) .set-panel {
   background: color-mix(in srgb, var(--bg) 82%, transparent);

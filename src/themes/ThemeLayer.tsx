@@ -10,7 +10,7 @@ import { usePreviewTheme } from "./preview";
 type Box = { left: number; top: number; width: number; height: number; radius: string; calm: number };
 
 /** Follow the content panel's position and size, including when it appears later (after onboarding). */
-function useContentBox(active: boolean): Box | null {
+function useContentBox(active: boolean, shell: boolean): Box | null {
   const [box, setBox] = useState<Box | null>(null);
   useEffect(() => {
     if (!active) { setBox(null); return; }
@@ -19,13 +19,12 @@ function useContentBox(active: boolean): Box | null {
     const measure = () => {
       raf = 0;
       if (!el || !el.isConnected) el = document.querySelector(".content");
-      if (!el) { setBox(null); return; }
       // The whole window, title bar and navigation included, so everything reads as one surface.
       // The navigation's width goes to the field as a calm zone (dimmed field behind the items).
-      const c = el.getBoundingClientRect();
+      // Without the shell (onboarding, first frame) the field covers the window with no calm zone.
       const r = { left: 0, top: 0, width: window.innerWidth, height: window.innerHeight };
       const radius = "0";
-      const calm = Math.round(c.left);
+      const calm = el ? Math.round(el.getBoundingClientRect().left) : 0;
       setBox((b) => (b && b.left === r.left && b.top === r.top && b.width === r.width && b.height === r.height && b.radius === radius && b.calm === calm
         ? b : { left: r.left, top: r.top, width: r.width, height: r.height, radius, calm }));
     };
@@ -37,6 +36,9 @@ function useContentBox(active: boolean): Box | null {
       schedule();
     };
     watch();
+    // First measure right away, not on the next frame: the window stays hidden until the field has
+    // drawn (see lib/reveal.ts), and a hidden webview may not run animation frames at all.
+    measure();
     // The panel can mount later (onboarding) or move when the sidebar collapses.
     const poll = window.setInterval(watch, 500);
     window.addEventListener("resize", schedule);
@@ -46,17 +48,20 @@ function useContentBox(active: boolean): Box | null {
       ro.disconnect();
       if (raf) cancelAnimationFrame(raf);
     };
-  }, [active]);
+    // `shell` re-runs this as soon as the app shell mounts, instead of waiting for the poll.
+  }, [active, shell]);
   return box;
 }
 
-export default function ThemeLayer({ theme: saved }: { theme: string }) {
+export default function ThemeLayer({ theme: saved, shell = true, onPainted }: { theme: string; shell?: boolean; onPainted?: () => void }) {
   // A shop preview (premium/index.ts startThemePreview) wins over the saved theme while it runs.
   const theme = usePreviewTheme() ?? saved;
   const backdrop = themeById(theme)?.backdrop;
   const ref = useRef<HTMLCanvasElement>(null);
-  const box = useContentBox(!!backdrop);
+  const box = useContentBox(!!backdrop, shell);
   const ready = !!box;
+  const painted = useRef(onPainted);
+  painted.current = onPainted;
 
   useEffect(() => {
     if (!backdrop || !ready) return;
@@ -64,9 +69,11 @@ export default function ThemeLayer({ theme: saved }: { theme: string }) {
     let dead = false;
     loadBackdrop(theme)
       .then((mod) => {
+        // start() draws its first frame synchronously.
         if (!dead && mod && ref.current) stop = mod.start(ref.current);
       })
-      .catch(() => { /* chunk failed to load: the theme still works without its field */ });
+      .catch(() => { /* chunk failed to load: the theme still works without its field */ })
+      .finally(() => { if (!dead) painted.current?.(); });
     return () => {
       dead = true;
       stop?.();

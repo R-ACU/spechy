@@ -110,7 +110,9 @@ export function Menu({ open, onClose, children, align = "right" }: { open: boole
   return <div ref={ref} className="menu" style={{ top: "calc(100% + 4px)", [align]: 0 }}>{children}</div>;
 }
 
-export function Kbd({ children }: { children: ReactNode }) { return <span className="kbd">{children}</span>; }
+export function Kbd({ children, className }: { children: ReactNode; className?: string }) {
+  return <span className={className ? `kbd ${className}` : "kbd"}>{children}</span>;
+}
 
 export function formatTime(ms: number, lang: string = "en"): string {
   return new Date(ms).toLocaleTimeString(lang === "de" ? "de-DE" : "en-US", { hour: "2-digit", minute: "2-digit" });

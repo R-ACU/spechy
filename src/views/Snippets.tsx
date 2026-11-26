@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { ArrowRight, ArrowUpDown, Pencil, RefreshCw, Search, Trash2, X } from "lucide-react";
+import { ArrowRight, ArrowUpDown, ClipboardPaste, Pencil, RefreshCw, Search, Trash2, X } from "lucide-react";
 import { api, type Snippet } from "../lib/ipc";
 import { t, useStore } from "../lib/store";
 import { MOCK, mockSnippets, safe } from "../lib/fallback";
@@ -51,8 +51,37 @@ function SnippetDialog({ snippet, onClose, onSave }: {
   );
 }
 
+/** Edit the spoken phrase of the built-in clipboard command. */
+function ClipboardDialog({ phrase, onClose, onSave }: { phrase: string; onClose: () => void; onSave: (phrase: string) => void }) {
+  const [value, setValue] = useState(phrase);
+  const submit = () => onSave(value.split(",").map((p) => p.trim()).filter(Boolean).join(", "));
+  return (
+    <Dialog title="Paste your clipboard" onClose={onClose} width={520}>
+      <div className="field">
+        <label className="field-label" htmlFor="clipboard-phrase">Phrase</label>
+        <input
+          id="clipboard-phrase"
+          className="input"
+          autoFocus
+          placeholder="paste clipboard"
+          value={value}
+          onChange={(e) => setValue(e.target.value)}
+          onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); submit(); } }}
+        />
+      </div>
+      <p className="hint">Say this phrase while dictating and Spechy puts the text from your clipboard right there. Separate several phrases with commas, leave it empty to turn the command off.</p>
+      <div className="dialog-actions">
+        <Button variant="secondary" onClick={onClose}>Cancel</Button>
+        <Button onClick={submit}>Save</Button>
+      </div>
+    </Dialog>
+  );
+}
+
 export default function Snippets() {
-  const { settings, toast } = useStore();
+  const { settings, update, toast } = useStore();
+  const [clipboardOpen, setClipboardOpen] = useState(false);
+  const clipboardPhrase = settings.clipboardPhrase.trim();
   const lang = settings.appLanguage;
   const [items, setItems] = useState<Snippet[]>([]);
   const [tab, setTab] = useState<Tab>("all");
@@ -135,6 +164,21 @@ export default function Snippets() {
       />
 
       <div className="list-card">
+        {(!query.trim() || `${clipboardPhrase} clipboard`.toLowerCase().includes(query.trim().toLowerCase())) && (
+          <div className="list-row snippet-builtin">
+            <div className="list-text">
+              <span className="pair one-line">
+                <ClipboardPaste size={16} className="snippet-builtin-icon" aria-hidden="true" />
+                <span className={clipboardPhrase ? "" : "faint"}>{clipboardPhrase || "Off"}</span>
+                <ArrowRight size={16} className="pair-arrow" />
+                <span className="snippet-text faint">Your clipboard text</span>
+              </span>
+            </div>
+            <div className="row-actions">
+              <IconButton label={t("Edit", lang)} onClick={() => setClipboardOpen(true)}><Pencil size={17} /></IconButton>
+            </div>
+          </div>
+        )}
         {shown.length === 0 && <div className="empty">No snippets yet. Add one with the button above.</div>}
         {shown.map((s) => (
           <div key={s.id} className="list-row">
@@ -153,6 +197,13 @@ export default function Snippets() {
         ))}
       </div>
 
+      {clipboardOpen && (
+        <ClipboardDialog
+          phrase={settings.clipboardPhrase}
+          onClose={() => setClipboardOpen(false)}
+          onSave={(phrase) => { setClipboardOpen(false); void update({ clipboardPhrase: phrase }); }}
+        />
+      )}
       {dialog.open && (
         <SnippetDialog
           key={dialog.snippet?.id ?? "new"}

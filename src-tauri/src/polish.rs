@@ -99,6 +99,65 @@ fn apply_snippets(text: &str, snippets: &[Snippet]) -> (String, Vec<String>) {
     (out, used)
 }
 
+// ---------- Clipboard command ----------
+// Saying the clipboard phrase ("paste clipboard") puts the clipboard text at that spot.
+// The phrase becomes CLIP_TOKEN before the language model runs, so the model never sees
+// (or rewrites) the clipboard content; the pipeline swaps the token for the text at the end.
+
+/// Placeholder for the clipboard text while the transcript is cleaned up.
+pub const CLIP_TOKEN: &str = "{{CLIPBOARD}}";
+
+/// The configured phrases: comma separated, so one setting can hold several languages.
+fn clipboard_phrases(setting: &str) -> Vec<&str> {
+    let mut phrases: Vec<&str> = setting.split(',').map(str::trim).filter(|p| !p.is_empty()).collect();
+    phrases.sort_by(|a, b| b.chars().count().cmp(&a.chars().count()));
+    phrases
+}
+
+/// Replace every spoken clipboard phrase with CLIP_TOKEN. Returns the text and the hit count.
+pub fn mark_clipboard(text: &str, setting: &str) -> (String, usize) {
+    // Work with a private-use character while matching, so a phrase like "clipboard" can
+    // never match inside the placeholder itself (existing ones included).
+    const SENTINEL: &str = "\u{E000}";
+    let mut out = text.replace(CLIP_TOKEN, SENTINEL);
+    let mut hits = 0usize;
+    for phrase in clipboard_phrases(setting) {
+        // Punctuated variants first so a mark Whisper hung on the phrase goes with it.
+        for suffix in [".", "!", "?", ",", ""] {
+            let (next, n) = replace_phrase(&out, &format!("{phrase}{suffix}"), SENTINEL);
+            out = next;
+            hits += n;
+        }
+    }
+    (out.replace(SENTINEL, CLIP_TOKEN), hits)
+}
+
+/// Put the clipboard text where the phrase was said. Also catches a phrase still in the text
+/// (cleanup failed, raw transcript used). `clipboard` is only read when a phrase was said.
+pub fn insert_clipboard(text: &str, setting: &str, clipboard: impl FnOnce() -> Option<String>) -> (String, ClipboardUse) {
+    let (marked, _) = mark_clipboard(text, setting);
+    if !marked.contains(CLIP_TOKEN) {
+        return (text.to_string(), ClipboardUse::NotSaid);
+    }
+    let clip = clipboard().map(|c| c.trim().to_string()).filter(|c| !c.is_empty());
+    let used = if clip.is_some() { ClipboardUse::Inserted } else { ClipboardUse::Empty };
+    let out = marked.replace(CLIP_TOKEN, clip.as_deref().unwrap_or(""));
+    // An empty clipboard leaves a double space or a space before punctuation behind.
+    let mut tidy = out.split_whitespace().collect::<Vec<_>>().join(" ");
+    for mark in [" .", " ,", " !", " ?"] {
+        tidy = tidy.replace(mark, &mark[1..]);
+    }
+    let out = if used == ClipboardUse::Empty { tidy } else { out.trim().to_string() };
+    (out, used)
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ClipboardUse {
+    NotSaid,
+    Inserted,
+    Empty,
+}
+
 /// Dictionary pass: every misspelling becomes the correct word (whole word, case-insensitive).
 fn apply_dictionary(text: &str, dictionary: &[DictionaryEntry]) -> (String, Vec<String>, i64) {
     let mut out = text.to_string();
@@ -405,9 +464,10 @@ pub fn polish(ctx: PolishContext) -> Result<PolishResult, String> {
         return Ok(PolishResult { text, ..Default::default() });
     }
 
-    // 1) Snippets, 2) dictionary.
+    // 1) Snippets, 2) clipboard phrase to its placeholder, 3) dictionary.
     let (after_snippets, used_snippets) = apply_snippets(ctx.raw, ctx.snippets);
-    let (after_dict, mut used_dictionary, dictionary_fixes) = apply_dictionary(&after_snippets, ctx.dictionary);
+    let (after_clip, clip_marks) = mark_clipboard(&after_snippets, &ctx.settings.clipboard_phrase);
+    let (after_dict, mut used_dictionary, dictionary_fixes) = apply_dictionary(&after_clip, ctx.dictionary);
 
     // Prompt forge is the language model step itself: it runs even when the
     // everyday cleanup is switched off, and says so when no model is set up
@@ -426,8 +486,19 @@ pub fn polish(ctx: PolishContext) -> Result<PolishResult, String> {
     }
 
     // 3) LLM polish. Prompt mode swaps the cleanup prompt for the prompt writer.
-    let system = if ctx.prompt_mode { build_prompt_system_prompt(&ctx) } else { build_system_prompt(&ctx) };
-    let polished = chat(ctx.settings, &system, &after_dict, 0.2)?;
+    let mut system = if ctx.prompt_mode { build_prompt_system_prompt(&ctx) } else { build_system_prompt(&ctx) };
+    if clip_marks > 0 {
+        system.push_str(&format!(
+            "- The text contains the placeholder {CLIP_TOKEN}. Keep it exactly as written, in the same place, once per occurrence. Never translate, remove or explain it.\n"
+        ));
+    }
+    let mut polished = chat(ctx.settings, &system, &after_dict, 0.2)?;
+    // A model that lost or doubled the placeholder would put the clipboard in the wrong
+    // place or nowhere: keep the deterministic text in that case.
+    if polished.matches(CLIP_TOKEN).count() != clip_marks {
+        log::warn!("cleanup changed the clipboard placeholder, using the text before cleanup");
+        polished = after_dict.clone();
+    }
 
     // 4) Dictionary again, in case the model reintroduced a misspelling.
     let (final_text, used_again, extra_fixes) = apply_dictionary(&polished, ctx.dictionary);
@@ -529,6 +600,43 @@ mod tests {
         let (out, used) = apply_snippets("readdress the addr now", &s);
         assert_eq!(out, "readdress the Hauptstrasse 1 now");
         assert_eq!(used, vec!["s1".to_string()]);
+    }
+
+    #[test]
+    fn clipboard_phrase_inserts_clipboard_text_in_place() {
+        let url = || Some("https://example.com/a?b=1".to_string());
+        let (out, used) = insert_clipboard("On this website, paste clipboard, the header is broken.", "paste clipboard", url);
+        assert_eq!(out, "On this website, https://example.com/a?b=1 the header is broken.");
+        assert_eq!(used, ClipboardUse::Inserted);
+        // Case and a trailing period from Whisper, several phrases, longest first.
+        let (out, _) = insert_clipboard("Look at Paste Clipboard.", "clipboard, paste clipboard", url);
+        assert_eq!(out, "Look at https://example.com/a?b=1");
+        // Not inside other words, and the clipboard is not read when nothing was said.
+        let (out, used) = insert_clipboard("The clipboards are full", "clipboard", || panic!("must not read the clipboard"));
+        assert_eq!(out, "The clipboards are full");
+        assert_eq!(used, ClipboardUse::NotSaid);
+    }
+
+    #[test]
+    fn clipboard_phrase_with_empty_clipboard_leaves_clean_text() {
+        let (out, used) = insert_clipboard("See paste clipboard here.", "paste clipboard", || Some("  ".into()));
+        assert_eq!(out, "See here.");
+        assert_eq!(used, ClipboardUse::Empty);
+        let (out, used) = insert_clipboard("paste clipboard", "", || Some("x".into()));
+        assert_eq!(out, "paste clipboard", "an empty setting switches the command off");
+        assert_eq!(used, ClipboardUse::NotSaid);
+    }
+
+    #[test]
+    fn clipboard_placeholder_survives_the_deterministic_passes() {
+        let mut settings = offline_settings();
+        settings.clipboard_phrase = "paste clipboard".into();
+        let dictionary = vec![dict("Tauri", "tori")];
+        let app = ForegroundApp { process_name: "code.exe".into(), title: "src".into(), hwnd: 0 };
+        let result = polish(ctx_for("open paste clipboard in tori", &settings, &dictionary, &[], &app)).unwrap();
+        assert_eq!(result.text, format!("open {CLIP_TOKEN} in Tauri"));
+        let (out, _) = insert_clipboard(&result.text, &settings.clipboard_phrase, || Some("C:\\x.txt".into()));
+        assert_eq!(out, "open C:\\x.txt in Tauri");
     }
 
     #[test]

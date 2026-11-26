@@ -3,6 +3,8 @@ import { invoke, Channel } from "@tauri-apps/api/core";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 
 export type Phase = "idle" | "recording" | "transcribing" | "polishing" | "error";
+/** Error text of install_update while a dictation runs (commands.rs DICTATION_RUNNING). */
+export const DICTATION_RUNNING = "dictation-running";
 export type DictationMode = "push-to-talk" | "hands-free" | "command" | "prompt";
 
 export interface DictationState {
@@ -142,6 +144,8 @@ export interface Settings {
   scratchpadPinned: boolean;
   onboarded: boolean;
   /** Leaderboard server: https, or http on this machine. Empty = debug default in dev builds, none in release. */
+  /** Spoken phrase(s), comma separated, that insert the clipboard text. Empty = off. */
+  clipboardPhrase: string;
   leaderboardUrl: string;
 }
 
@@ -325,6 +329,7 @@ export const api = {
     channel.onmessage = onProgress;
     return invoke<string>("download_update", { onProgress: channel });
   },
+  /** Rejects with DICTATION_RUNNING while a dictation runs (the restart would lose it). */
   installUpdate: () => invoke<void>("install_update"),
   updateDownloadStatus: () => invoke<{ downloading: boolean; version: string | null; progress: { downloaded: number; total: number | null } | null; error: string | null }>("update_download_status"),
   suspendHotkeys: (suspended: boolean) => invoke<void>("suspend_hotkeys", { suspended }),

@@ -95,12 +95,15 @@ fn context_tail(context: Option<&str>) -> String {
 /// therefore teaches it to write bare word lists, so the vocabulary goes into a
 /// short natural sentence in the spoken language, and the end of the previous
 /// transcript (hands-free segments) follows it, closest to the new audio.
+const PROMPT_OPENING_DE: &str = "Hallo, heute geht es um ";
+const PROMPT_OPENING_EN: &str = "Hello, today we talk about ";
+
 fn whisper_prompt(language: Option<&str>, vocabulary: &[String], context: Option<&str>) -> String {
     let german = language.map(|l| l.trim().to_ascii_lowercase().starts_with("de")).unwrap_or(false);
     let (opening, last_joiner) = if german {
-        ("Hallo, heute geht es um ", " und ")
+        (PROMPT_OPENING_DE, " und ")
     } else {
-        ("Hello, today we talk about ", " and ")
+        (PROMPT_OPENING_EN, " and ")
     };
     let context = context_tail(context);
     let budget = PROMPT_MAX_CHARS
@@ -292,7 +295,33 @@ fn transcribe_openai_compatible(
         Ok(r) => r.into_json().map_err(|e| format!("{label} sent an unreadable answer: {e}"))?,
         Err(e) => return Err(map_error(label, e)),
     };
-    Ok(json.get("text").and_then(|v| v.as_str()).unwrap_or_default().trim().to_string())
+    let text = json.get("text").and_then(|v| v.as_str()).unwrap_or_default().trim().to_string();
+    Ok(strip_prompt_echo(&text, &prompt))
+}
+
+/// On noise without speech Whisper often answers with its own prompt, word for word
+/// (measured with Groq: four seconds of noise came back as "Hallo, heute geht es um
+/// Spechy, Hermes und Claude."). Such an echo is removed; Groq reports no usable
+/// no-speech probability for it, so the text itself is the only signal.
+fn strip_prompt_echo(text: &str, prompt: &str) -> String {
+    let mut out = text.to_string();
+    // The vocabulary sentence ends at its first period; the context tail after it is
+    // real earlier speech and may legitimately repeat.
+    // Without vocabulary the prompt is only that context, and nothing is stripped.
+    if !(prompt.starts_with(PROMPT_OPENING_DE) || prompt.starts_with(PROMPT_OPENING_EN)) {
+        return out;
+    }
+    let sentence = prompt.split_inclusive('.').next().unwrap_or_default().trim();
+    let lower_sentence = sentence.to_lowercase();
+    let lower = out.to_lowercase();
+    // Byte offsets of the lowercase copy match the original only while lowercasing
+    // keeps the length; otherwise leave the text alone.
+    let Some(at) = lower.find(&lower_sentence).filter(|_| lower.len() == out.len()) else {
+        return out;
+    };
+    out.replace_range(at..at + lower_sentence.len(), "");
+    log::info!("removed an echo of the transcription prompt");
+    out.split_whitespace().collect::<Vec<_>>().join(" ")
 }
 
 // ---------- whisper.cpp server ----------
@@ -321,7 +350,8 @@ fn transcribe_whisper_cpp(base_url: &str, req: &SttRequest, context: Option<&str
         Ok(r) => r.into_json().map_err(|e| format!("{label} sent an unreadable answer: {e}"))?,
         Err(e) => return Err(map_error(label, e)),
     };
-    Ok(json.get("text").and_then(|v| v.as_str()).unwrap_or_default().trim().to_string())
+    let text = json.get("text").and_then(|v| v.as_str()).unwrap_or_default().trim().to_string();
+    Ok(strip_prompt_echo(&text, &prompt))
 }
 
 // ---------- OpenRouter ----------
@@ -624,6 +654,19 @@ mod tests {
         // Nothing to say: no prompt at all, so the model is not nudged.
         assert_eq!(whisper_prompt(Some("de"), &[], None), "");
         assert_eq!(whisper_prompt(Some("de"), &[], Some("   ")), "");
+    }
+
+    #[test]
+    fn an_echo_of_the_prompt_is_removed() {
+        let prompt = whisper_prompt(Some("de"), &words(&["Spechy", "Hermes", "Claude"]), Some("Davor gesagt."));
+        // Measured with Groq: noise alone came back as the vocabulary sentence.
+        assert_eq!(strip_prompt_echo("Hallo, heute geht es um Spechy, Hermes und Claude.", &prompt), "");
+        assert_eq!(strip_prompt_echo("Das passt so. hallo, heute geht es um spechy, hermes und claude.", &prompt), "Das passt so.");
+        // Real speech that only starts the same way stays.
+        assert_eq!(strip_prompt_echo("Hallo, heute geht es um das Meeting.", &prompt), "Hallo, heute geht es um das Meeting.");
+        // Without vocabulary the prompt is only earlier speech: nothing is stripped.
+        let context_only = whisper_prompt(Some("de"), &[], Some("Davor gesagt."));
+        assert_eq!(strip_prompt_echo("Davor gesagt. Weiter.", &context_only), "Davor gesagt. Weiter.");
     }
 
     #[test]

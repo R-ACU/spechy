@@ -337,13 +337,16 @@ impl Default for StyleSettings {
     }
 }
 
+/// Default clipboard command, keep in step with src/lib/fallback.ts.
+pub const DEFAULT_CLIPBOARD_PHRASE: &str = "paste clipboard";
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase", default)]
 pub struct Settings {
     pub user_name: String,
     /// UI language: "en" | "de"
     pub app_language: String,
-    /// "system" | "light" | "dark"
+    /// Theme id from src/themes/registry.ts ("ascii" by default, "system", "light", "dark", ...).
     pub theme: String,
     /// Whisper language hints, e.g. ["de", "en"]. Empty = auto.
     pub dictation_languages: Vec<String>,
@@ -372,6 +375,9 @@ pub struct Settings {
     /// When true, dictations go to the scratchpad instead of the focused app.
     pub scratchpad_pinned: bool,
     pub onboarded: bool,
+    /// Spoken phrase that puts the clipboard text at that spot of a dictation. Several phrases
+    /// are comma separated; empty switches the command off. See polish::mark_clipboard.
+    pub clipboard_phrase: String,
     /// Leaderboard server (https, or http on this machine). Empty = the debug default in debug builds, none in release.
     pub leaderboard_url: String,
 }
@@ -380,7 +386,8 @@ impl Default for Settings {
         Self {
             user_name: String::new(),
             app_language: "en".into(),
-            theme: "system".into(),
+            // Keep in step with DEFAULT_THEME in src/lib/theme.ts.
+            theme: "ascii".into(),
             dictation_languages: vec!["de".into(), "en".into()],
             primary_language: String::new(),
             microphone: String::new(),
@@ -398,6 +405,7 @@ impl Default for Settings {
             style: StyleSettings::default(),
             scratchpad_pinned: false,
             onboarded: false,
+            clipboard_phrase: DEFAULT_CLIPBOARD_PHRASE.into(),
             leaderboard_url: String::new(),
         }
     }
